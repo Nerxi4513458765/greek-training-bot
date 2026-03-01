@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: greek-training-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: WEB_APP_URL
+        value: https://nerxi4513458765.github.io/greek-training-app/
