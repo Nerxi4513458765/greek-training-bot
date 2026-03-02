@@ -1,12 +1,15 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# Загружаем .env только для локальной разработки
+if os.path.exists('.env'):
+    load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEB_APP_URL = os.getenv("WEB_APP_URL")
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+WEB_APP_URL = os.getenv('WEB_APP_URL')
 
 if not BOT_TOKEN:
-    raise ValueError("Нет токена! Создай файл .env и добавь BOT_TOKEN=твой_токен")
+    raise ValueError("❌ BOT_TOKEN не задан! Добавь его в переменные окружения Railway")
+
 if not WEB_APP_URL:
-    raise ValueError("Нет ссылки на Mini App! Добавь WEB_APP_URL=твоя_ссылка")
+    raise ValueError("❌ WEB_APP_URL не задан! Добавь его в переменные окружения Railway")
