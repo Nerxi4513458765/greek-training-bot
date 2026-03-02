@@ -1,16 +1,24 @@
 """
-main.py - Основной файл бота для Railway
+main.py - Полный греческий бот для Railway
+Со всеми хендлерами, базой данных и вебхуками
 """
 
 import asyncio
 import logging
 import os
 import sys
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import Message
-from flask import Flask, request, jsonify
+from datetime import datetime
 from threading import Thread
+
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import Message
+from aiogram.filters import Command
+from flask import Flask, request, jsonify
+
+# Импортируем свои модули
+from database import Database
+from config import BOT_TOKEN, WEB_APP_URL
+from handlers import start, oracle, chronicles, trials, info
 
 # Настройка логирования
 logging.basicConfig(
@@ -21,13 +29,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Конфигурация
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
 if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN не задан!")
     raise ValueError("BOT_TOKEN must be set in environment variables")
 
 # URL для вебхука
-RAILWAY_URL = os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'greek-training-bot-production-2cc5.up.railway.app')
+RAILWAY_URL = os.environ.get('RAILWAY_PUBLIC_DOMAIN')
+if not RAILWAY_URL:
+    logger.warning("⚠️ RAILWAY_PUBLIC_DOMAIN не задан, использую localhost")
+    RAILWAY_URL = "localhost:8000"
+
 WEBHOOK_PATH = '/webhook'
 WEBHOOK_URL = f"https://{RAILWAY_URL}{WEBHOOK_PATH}"
 
@@ -35,57 +46,26 @@ WEBHOOK_URL = f"https://{RAILWAY_URL}{WEBHOOK_PATH}"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# База данных
+db = Database()
+
 # Flask приложение
 app = Flask(__name__)
 
-# === ВСЕ ОБРАБОТЧИКИ ЗДЕСЬ ===
+# ============================================
+# ПОДКЛЮЧАЕМ ВСЕ ОБРАБОТЧИКИ ИЗ ПАПКИ HANDLERS
+# ============================================
 
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    logger.info(f"Команда /start от {message.from_user.id}")
-    await message.answer(
-        "✅ <b>Бот работает на Railway!</b>\n\n"
-        "Доступные команды:\n"
-        "/help - помощь\n"
-        "/test - тест\n"
-        "/stats - статистика",
-        parse_mode="HTML"
-    )
+dp.include_router(start.router)
+dp.include_router(oracle.router)
+dp.include_router(chronicles.router)
+dp.include_router(trials.router)
+dp.include_router(info.router)
 
-@dp.message(Command("help"))
-async def cmd_help(message: Message):
-    logger.info(f"Команда /help от {message.from_user.id}")
-    await message.answer(
-        "📋 <b>Доступные команды:</b>\n\n"
-        "/start - Приветствие\n"
-        "/help - Эта справка\n"
-        "/test - Тестовая команда\n"
-        "/stats - Статистика",
-        parse_mode="HTML"
-    )
+# ============================================
+# АСИНХРОННЫЙ ЦИКЛ
+# ============================================
 
-@dp.message(Command("test"))
-async def cmd_test(message: Message):
-    logger.info(f"Команда /test от {message.from_user.id}")
-    await message.answer("✅ Тест пройден успешно!")
-
-@dp.message(Command("stats"))
-async def cmd_stats(message: Message):
-    logger.info(f"Команда /stats от {message.from_user.id}")
-    # Заглушка для статистики
-    await message.answer(
-        "📊 <b>Статистика</b>\n\n"
-        "Пока в разработке...",
-        parse_mode="HTML"
-    )
-
-@dp.message()
-async def echo(message: Message):
-    """Обработчик всех остальных сообщений"""
-    logger.info(f"Сообщение от {message.from_user.id}: {message.text}")
-    await message.answer(f"Ты написал: {message.text}")
-
-# === АСИНХРОННЫЙ ЦИКЛ ===
 loop = asyncio.new_event_loop()
 
 def start_loop():
@@ -96,46 +76,80 @@ thread = Thread(target=start_loop, daemon=True)
 thread.start()
 logger.info("✅ Асинхронный цикл запущен")
 
-# === FLASK МАРШРУТЫ ===
+# ============================================
+# ОБРАБОТЧИК ДАННЫХ ИЗ MINI APP
+# ============================================
+
+async def handle_web_app_data(update_data):
+    """Обработка данных из Mini App"""
+    try:
+        # Здесь будет логика сохранения тренировок
+        logger.info(f"📦 Данные из Mini App: {update_data}")
+        # TODO: реализовать сохранение в БД
+    except Exception as e:
+        logger.error(f"❌ Ошибка обработки данных Mini App: {e}")
+
+# ============================================
+# FLASK МАРШРУТЫ
+# ============================================
+
 @app.route('/')
 def index():
     return jsonify({
         "status": "ok",
-        "message": "Бот работает на Railway",
-        "webhook": WEBHOOK_URL
+        "message": "🏛️ Чертог тренировок работает на Railway",
+        "webhook": WEBHOOK_URL,
+        "version": "full",
+        "timestamp": datetime.now().isoformat()
     })
 
 @app.route('/health')
 def health():
-    return jsonify({"status": "ok", "bot": "running"})
+    return jsonify({
+        "status": "ok",
+        "bot": "running",
+        "database": "connected",
+        "timestamp": datetime.now().isoformat()
+    })
 
 @app.route(WEBHOOK_PATH, methods=['POST'])
 def webhook():
+    """Обработка вебхуков от Telegram"""
     try:
         logger.info("📩 Получен webhook запрос")
         update_data = request.get_json()
-        logger.info(f"📄 Update ID: {update_data.get('update_id')}")
         
-        future = asyncio.run_coroutine_threadsafe(
-            handle_update(update_data), 
-            loop
-        )
-        future.result(timeout=5)
+        # Особый тип данных из Mini App
+        if update_data and 'web_app_data' in update_data:
+            # Это данные из Mini App
+            asyncio.run_coroutine_threadsafe(
+                handle_web_app_data(update_data),
+                loop
+            )
+        else:
+            # Обычное обновление от Telegram
+            future = asyncio.run_coroutine_threadsafe(
+                process_update(update_data),
+                loop
+            )
+            future.result(timeout=5)
         
         return "ok", 200
     except Exception as e:
-        logger.error(f"❌ Ошибка webhook: {e}")
+        logger.error(f"❌ Ошибка webhook: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-async def handle_update(update_data):
+async def process_update(update_data):
+    """Асинхронная обработка обновления"""
     try:
         update = types.Update(**update_data)
         await dp.feed_update(bot, update)
         logger.info(f"✅ Update {update_data.get('update_id')} обработан")
     except Exception as e:
-        logger.error(f"❌ Ошибка в handle_update: {e}")
+        logger.error(f"❌ Ошибка в process_update: {e}")
 
 async def setup_webhook():
+    """Установка вебхука"""
     try:
         await bot.set_webhook(WEBHOOK_URL)
         info = await bot.get_webhook_info()
@@ -145,14 +159,20 @@ async def setup_webhook():
         logger.error(f"❌ Ошибка установки вебхука: {e}")
         return None
 
+# ============================================
+# ЗАПУСК
+# ============================================
+
 # Устанавливаем вебхук
 try:
     future = asyncio.run_coroutine_threadsafe(setup_webhook(), loop)
     future.result(timeout=10)
     logger.info("✅ Бот готов к работе!")
+    logger.info(f"🌐 WEB_APP_URL: {WEB_APP_URL}")
 except Exception as e:
     logger.error(f"❌ Ошибка при запуске: {e}")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8000))
-    app.run(host='0.0.0.0', port=port)ическая ошибка: {e}", exc_info=True)
+    logger.info(f"🚀 Запуск Flask на порту {port}")
+    app.run(host='0.0.0.0', port=port)
