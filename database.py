@@ -1,6 +1,6 @@
 """
 database.py - Работа с базой данных тренировок
-Поддерживает названия тренировок, шаблоны и статистику
+Поддерживает названия тренировок, шаблоны, статистику и удаление
 """
 
 import sqlite3
@@ -180,6 +180,43 @@ class Database:
             logger.error(f"❌ Ошибка получения тренировок: {e}")
             return []
 
+    # ========== НОВЫЙ МЕТОД ДЛЯ УДАЛЕНИЯ ТРЕНИРОВКИ ==========
+    def delete_workout(self, workout_id, user_id=None):
+        """
+        Удалить тренировку по ID
+        Если указан user_id, проверяет принадлежность тренировки
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Если указан user_id, проверяем принадлежность
+                if user_id:
+                    cursor.execute('SELECT user_id FROM workouts WHERE id = ?', (workout_id,))
+                    result = cursor.fetchone()
+                    if not result:
+                        logger.warning(f"⚠️ Тренировка {workout_id} не найдена")
+                        return False
+                    if result[0] != user_id:
+                        logger.warning(f"⚠️ Попытка удалить чужую тренировку {workout_id}")
+                        return False
+
+                # Удаляем тренировку
+                cursor.execute('DELETE FROM workouts WHERE id = ?', (workout_id,))
+                conn.commit()
+                deleted = cursor.rowcount
+
+                if deleted > 0:
+                    logger.info(f"✅ Тренировка {workout_id} успешно удалена")
+                    return True
+                else:
+                    logger.warning(f"⚠️ Тренировка {workout_id} не найдена")
+                    return False
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка удаления тренировки {workout_id}: {e}", exc_info=True)
+            return False
+
     def get_workout_stats(self, user_id):
         """Получить статистику тренировок"""
         try:
@@ -243,3 +280,65 @@ class Database:
                 'last_workout': None,
                 'last_workout_name': None
             }
+
+    def save_template(self, user_id, template_name, exercises):
+        """Сохранить шаблон тренировки"""
+        try:
+            exercises_json = json.dumps(exercises, ensure_ascii=False)
+
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO workout_templates (user_id, template_name, exercises)
+                    VALUES (?, ?, ?)
+                ''', (user_id, template_name, exercises_json))
+                conn.commit()
+                template_id = cursor.lastrowid
+                logger.info(f"✅ Шаблон '{template_name}' сохранён (ID: {template_id})")
+                return template_id
+        except Exception as e:
+            logger.error(f"❌ Ошибка сохранения шаблона: {e}")
+            return None
+
+    def get_templates(self, user_id):
+        """Получить все шаблоны пользователя"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT id, template_name, exercises, created_at
+                    FROM workout_templates
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC
+                ''', (user_id,))
+
+                templates = []
+                for row in cursor.fetchall():
+                    template = {
+                        'id': row[0],
+                        'name': row[1],
+                        'exercises': json.loads(row[2]) if row[2] else [],
+                        'created_at': row[3]
+                    }
+                    templates.append(template)
+
+                logger.info(f"📋 Загружено {len(templates)} шаблонов для user {user_id}")
+                return templates
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки шаблонов: {e}")
+            return []
+
+    def clear_user_data(self, user_id):
+        """Очистить все данные пользователя (для тестирования)"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM workouts WHERE user_id = ?', (user_id,))
+                cursor.execute('DELETE FROM workout_templates WHERE user_id = ?', (user_id,))
+                cursor.execute('DELETE FROM users WHERE user_id = ?', (user_id,))
+                conn.commit()
+                logger.info(f"✅ Данные пользователя {user_id} очищены")
+                return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка очистки данных: {e}")
+            return False

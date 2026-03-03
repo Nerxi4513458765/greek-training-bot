@@ -1,5 +1,5 @@
 """
-main.py - Полный греческий бот для Railway с сохранением тренировок
+main.py - Полный греческий бот для Railway с сохранением и удалением тренировок
 """
 
 import asyncio
@@ -191,7 +191,7 @@ def health():
 
 @app.route(WEBHOOK_PATH, methods=['POST'])
 def webhook():
-    """Обработка вебхуков от Telegram с сохранением тренировок"""
+    """Обработка вебхуков от Telegram с сохранением и удалением тренировок"""
     try:
         update_data = request.get_json()
         logger.info("=" * 50)
@@ -212,11 +212,13 @@ def webhook():
                     data = json.loads(web_app_data['data'])
                     logger.info(f"🔍 Распарсенные данные: {json.dumps(data, indent=2, ensure_ascii=False)}")
 
-                    # Проверяем тип данных
+                    # Получаем информацию о пользователе
+                    user_id = message['from']['id']
+                    user_name = message['from'].get('first_name', 'Герой')
+
+                    # ========== ОБРАБОТКА СОХРАНЕНИЯ ТРЕНИРОВКИ ==========
                     if data.get('type') == 'new_workout':
                         workout = data.get('workout', {})
-                        user_id = message['from']['id']
-                        user_name = message['from'].get('first_name', 'Герой')
 
                         logger.info(f"👤 Пользователь: {user_name} (ID: {user_id})")
                         logger.info(f"💪 Название тренировки: {workout.get('name')}")
@@ -251,6 +253,36 @@ def webhook():
                         except Exception as e:
                             logger.error(f"❌ Ошибка сохранения в БД: {e}", exc_info=True)
 
+                    # ========== НОВАЯ ОБРАБОТКА УДАЛЕНИЯ ТРЕНИРОВКИ ==========
+                    elif data.get('type') == 'delete_workout':
+                        workout_id = data.get('workout_id')
+
+                        logger.info(f"🗑️ ЗАПРОС НА УДАЛЕНИЕ ТРЕНИРОВКИ {workout_id}")
+                        logger.info(f"👤 Пользователь: {user_name} (ID: {user_id})")
+
+                        # Удаляем тренировку из базы данных
+                        try:
+                            success = db.delete_workout(workout_id, user_id=user_id)
+
+                            if success:
+                                logger.info(f"✅ ТРЕНИРОВКА {workout_id} УСПЕШНО УДАЛЕНА")
+
+                                # Отправляем подтверждение пользователю
+                                asyncio.run_coroutine_threadsafe(
+                                    bot.send_message(
+                                        chat_id=user_id,
+                                        text=f"🗑️ <b>Тренировка удалена</b>\n\n"
+                                             f"ID: {workout_id}",
+                                        parse_mode="HTML"
+                                    ),
+                                    loop
+                                )
+                            else:
+                                logger.warning(f"⚠️ Не удалось удалить тренировку {workout_id}")
+
+                        except Exception as e:
+                            logger.error(f"❌ Ошибка удаления из БД: {e}", exc_info=True)
+
                 except json.JSONDecodeError as e:
                     logger.error(f"❌ Ошибка парсинга JSON: {e}")
                 except Exception as e:
@@ -279,4 +311,3 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8000))
     logger.info(f"🚀 Запуск Flask на порту {port}")
     app.run(host='0.0.0.0', port=port)
-
