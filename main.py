@@ -1,5 +1,5 @@
 """
-main.py - Полный код бота с удалением тренировок по ID
+main.py - Полный код бота с удалением тренировок по дате
 """
 
 import asyncio
@@ -115,7 +115,7 @@ except Exception as e:
 
 
 # ============================================
-# ОБРАБОТЧИК ВЕБХУКОВ
+# ОБРАБОТЧИК ВЕБХУКОВ С УДАЛЕНИЕМ ПО ДАТЕ
 # ============================================
 
 @app.route('/')
@@ -177,56 +177,84 @@ def webhook():
                             loop
                         )
 
-                # ===== УДАЛЕНИЕ ТРЕНИРОВКИ ПО ID (ИСПРАВЛЕНО!) =====
-                elif data.get('type') == 'delete_workout':
-                    workout_id = data.get('workout_id')
-                    logger.info(f"🗑️ Удаление тренировки с ID {workout_id} от {user_name}")
+                # ===== УДАЛЕНИЕ ТРЕНИРОВКИ ПО ДАТЕ =====
+                elif data.get('type') == 'delete_workout_by_date':
+                    iso_date = data.get('date')
+                    logger.info(f"🗑️ Удаление тренировки от {iso_date}")
 
-                    # Удаляем из базы по ID
-                    with db.get_connection() as conn:
-                        cursor = conn.cursor()
+                    # Конвертируем ISO дату в формат SQLite
+                    try:
+                        # Из "2026-03-03T18:28:37.277Z" в "2026-03-03 18:28:37"
+                        date_obj = datetime.fromisoformat(iso_date.replace('Z', '+00:00'))
+                        sqlite_date = date_obj.strftime('%Y-%m-%d %H:%M:%S')
+                        logger.info(f"🔄 Конвертировано: {sqlite_date}")
 
-                        # Проверяем, существует ли тренировка
-                        cursor.execute('''
-                            SELECT id, workout_name FROM workouts 
-                            WHERE id = ? AND user_id = ?
-                        ''', (workout_id, user_id))
+                        with db.get_connection() as conn:
+                            cursor = conn.cursor()
 
-                        workout = cursor.fetchone()
-
-                        if workout:
-                            logger.info(f"✅ Найдена тренировка: {workout[1]} (ID: {workout[0]})")
-
+                            # Находим тренировку
                             cursor.execute('''
-                                DELETE FROM workouts 
-                                WHERE id = ? AND user_id = ?
-                            ''', (workout_id, user_id))
+                                SELECT id, workout_name FROM workouts 
+                                WHERE user_id = ? AND workout_date = ?
+                            ''', (user_id, sqlite_date))
 
-                            conn.commit()
-                            logger.info(f"✅ Тренировка {workout_id} удалена")
+                            workout = cursor.fetchone()
 
-                            # Отправляем подтверждение
-                            asyncio.run_coroutine_threadsafe(
-                                bot.send_message(
-                                    chat_id=user_id,
-                                    text=f"🗑️ <b>Тренировка удалена</b>",
-                                    parse_mode="HTML"
-                                ),
-                                loop
-                            )
-                        else:
-                            logger.warning(f"⚠️ Тренировка {workout_id} не найдена у пользователя {user_id}")
+                            if workout:
+                                logger.info(f"✅ Найдена: {workout[1]} (ID: {workout[0]})")
 
-                            # Отправляем уведомление об ошибке
-                            asyncio.run_coroutine_threadsafe(
-                                bot.send_message(
-                                    chat_id=user_id,
-                                    text=f"❌ <b>Ошибка удаления</b>\n\n"
-                                         f"Тренировка с ID {workout_id} не найдена",
-                                    parse_mode="HTML"
-                                ),
-                                loop
-                            )
+                                cursor.execute('''
+                                    DELETE FROM workouts 
+                                    WHERE user_id = ? AND workout_date = ?
+                                ''', (user_id, sqlite_date))
+
+                                conn.commit()
+                                logger.info(f"✅ Тренировка удалена")
+
+                                asyncio.run_coroutine_threadsafe(
+                                    bot.send_message(
+                                        chat_id=user_id,
+                                        text=f"🗑️ <b>Тренировка удалена</b>",
+                                        parse_mode="HTML"
+                                    ),
+                                    loop
+                                )
+                            else:
+                                logger.warning(f"⚠️ Тренировка от {sqlite_date} не найдена")
+
+                                # Ищем похожие даты для отладки
+                                cursor.execute('''
+                                    SELECT workout_date FROM workouts 
+                                    WHERE user_id = ? AND DATE(workout_date) = DATE(?)
+                                    LIMIT 3
+                                ''', (user_id, sqlite_date))
+
+                                similar = cursor.fetchall()
+                                if similar:
+                                    logger.info(f"📅 Похожие даты в БД:")
+                                    for s in similar:
+                                        logger.info(f"   - {s[0]}")
+
+                                asyncio.run_coroutine_threadsafe(
+                                    bot.send_message(
+                                        chat_id=user_id,
+                                        text=f"❌ <b>Ошибка удаления</b>\n\n"
+                                             f"Тренировка не найдена",
+                                        parse_mode="HTML"
+                                    ),
+                                    loop
+                                )
+
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка конвертации даты: {e}")
+                        asyncio.run_coroutine_threadsafe(
+                            bot.send_message(
+                                chat_id=user_id,
+                                text=f"❌ <b>Ошибка формата даты</b>",
+                                parse_mode="HTML"
+                            ),
+                            loop
+                        )
 
             except Exception as e:
                 logger.error(f"❌ Ошибка обработки: {e}")
@@ -239,6 +267,31 @@ def webhook():
     except Exception as e:
         logger.error(f"❌ Критическая ошибка: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+# ============================================
+# КОМАНДЫ ДЛЯ ТЕСТИРОВАНИЯ
+# ============================================
+
+@dp.message(Command("check_db"))
+async def cmd_check_db(message: Message):
+    """Проверить содержимое базы данных"""
+    user_id = message.from_user.id
+    workouts = db.get_user_workouts(user_id, limit=10)
+
+    text = f"📊 <b>База данных для {message.from_user.first_name}</b>\n\n"
+    text += f"👤 User ID: <code>{user_id}</code>\n"
+    text += f"📚 Всего тренировок: {len(workouts)}\n\n"
+
+    if workouts:
+        text += "<b>Последние тренировки:</b>\n"
+        for w in workouts[:5]:
+            date_str = w['date'][:16].replace('T', ' ') if 'T' in w['date'] else w['date']
+            text += f"• ID: {w['id']} — {w['name']} ({date_str})\n"
+    else:
+        text += "❌ Тренировок пока нет\n"
+
+    await message.answer(text, parse_mode="HTML")
 
 
 # ============================================
