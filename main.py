@@ -1,5 +1,5 @@
 """
-main.py - Полный греческий бот для Railway с сохранением и удалением тренировок
+main.py - Полный код бота с сохранением и удалением тренировок
 """
 
 import asyncio
@@ -76,59 +76,7 @@ def run_async_loop():
 # Запускаем цикл в отдельном потоке
 thread = Thread(target=run_async_loop, daemon=True)
 thread.start()
-logger.info("✅ Асинхронный цикл запущен и работает постоянно")
-
-
-# ============================================
-# ОБРАБОТЧИКИ КОМАНД
-# ============================================
-
-@dp.message(Command("check_db"))
-async def cmd_check_db(message: Message):
-    """Проверить содержимое базы данных"""
-    user_id = message.from_user.id
-    logger.info(f"📊 {message.from_user.first_name} проверяет БД")
-
-    try:
-        workouts = db.get_user_workouts(user_id)
-
-        text = f"📊 <b>База данных для {message.from_user.first_name}</b>\n\n"
-        text += f"👤 User ID: <code>{user_id}</code>\n"
-        text += f"📚 Всего тренировок: {len(workouts)}\n\n"
-
-        if workouts:
-            text += "<b>Последние тренировки:</b>\n"
-            for w in workouts[-5:][::-1]:  # последние 5 в обратном порядке
-                date = w.get('date', '')[:10] if w.get('date') else 'неизвестно'
-                text += f"• {w.get('name', 'Без названия')} ({date}) — {len(w.get('exercises', []))} упр.\n"
-        else:
-            text += "❌ Тренировок пока нет!\n"
-            text += "\n💡 Создай тренировку в Mini App и проверь снова."
-
-        await message.answer(text, parse_mode="HTML")
-
-    except Exception as e:
-        logger.error(f"❌ Ошибка в check_db: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {e}")
-
-
-@dp.message(Command("clear_my_workouts"))
-async def cmd_clear_workouts(message: Message):
-    """Очистить свои тренировки (для тестов)"""
-    user_id = message.from_user.id
-
-    try:
-        with db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM workouts WHERE user_id = ?", (user_id,))
-            conn.commit()
-            deleted = cursor.rowcount
-
-        await message.answer(f"✅ Удалено {deleted} тренировок")
-        logger.info(f"🧹 {message.from_user.first_name} очистил свои тренировки")
-    except Exception as e:
-        logger.error(f"❌ Ошибка очистки: {e}")
-        await message.answer(f"❌ Ошибка: {e}")
+logger.info("✅ Асинхронный цикл запущен")
 
 
 # ============================================
@@ -140,9 +88,8 @@ async def process_update(update_data):
     try:
         update = types.Update(**update_data)
         await dp.feed_update(bot, update)
-        logger.info(f"✅ Update {update_data.get('update_id', '?')} обработан")
     except Exception as e:
-        logger.error(f"❌ Ошибка process_update: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка process_update: {e}")
 
 
 async def setup_webhook():
@@ -162,152 +109,111 @@ try:
     future = asyncio.run_coroutine_threadsafe(setup_webhook(), loop)
     future.result(timeout=10)
     logger.info("✅ Бот готов к работе!")
-    logger.info(f"🌐 WEB_APP_URL: {WEB_APP_URL}")
 except Exception as e:
     logger.error(f"❌ Ошибка при запуске: {e}")
 
 
 # ============================================
-# FLASK МАРШРУТЫ (С ОБРАБОТКОЙ ДАННЫХ ИЗ MINI APP)
+# ОБРАБОТЧИК ВЕБХУКОВ (СОХРАНЕНИЕ И УДАЛЕНИЕ)
 # ============================================
 
 @app.route('/')
 def index():
-    return jsonify({
-        "status": "ok",
-        "message": "🏛️ Чертог тренировок работает",
-        "webhook": WEBHOOK_URL
-    })
+    return jsonify({"status": "ok", "message": "Бот работает"})
 
 
 @app.route('/health')
 def health():
-    return jsonify({
-        "status": "ok",
-        "bot": "running",
-        "timestamp": datetime.now().isoformat()
-    })
+    return jsonify({"status": "ok", "bot": "running"})
 
 
 @app.route(WEBHOOK_PATH, methods=['POST'])
 def webhook():
-    """Обработка вебхуков от Telegram с сохранением и удалением тренировок"""
+    """Обработка вебхуков от Telegram"""
     try:
         update_data = request.get_json()
         logger.info("=" * 50)
-        logger.info("📩 ПОЛУЧЕН WEBHOOK ЗАПРОС")
 
-        # Проверяем, есть ли данные от Mini App
-        if 'message' in update_data:
-            message = update_data['message']
+        # Проверяем данные от Mini App
+        if 'message' in update_data and 'web_app_data' in update_data['message']:
+            web_app_data = update_data['message']['web_app_data']
+            user_id = update_data['message']['from']['id']
+            user_name = update_data['message']['from'].get('first_name', 'Герой')
 
-            # Проверяем наличие web_app_data
-            if 'web_app_data' in message:
-                web_app_data = message['web_app_data']
-                logger.info("🎯 НАЙДЕНЫ ДАННЫЕ ИЗ MINI APP!")
-                logger.info(f"📄 Сырые данные: {web_app_data}")
+            try:
+                data = json.loads(web_app_data['data'])
+                logger.info(f"📦 Данные от {user_name}: {data}")
 
-                try:
-                    # Парсим JSON из Mini App
-                    data = json.loads(web_app_data['data'])
-                    logger.info(f"🔍 Распарсенные данные: {json.dumps(data, indent=2, ensure_ascii=False)}")
+                # ===== СОХРАНЕНИЕ ТРЕНИРОВКИ =====
+                if data.get('type') == 'new_workout':
+                    workout = data.get('workout', {})
 
-                    # Получаем информацию о пользователе
-                    user_id = message['from']['id']
-                    user_name = message['from'].get('first_name', 'Герой')
+                    workout_id = db.save_workout(
+                        user_id=user_id,
+                        workout_name=workout.get('name', 'Тренировка'),
+                        exercises=workout.get('exercises', [])
+                    )
 
-                    # ========== ОБРАБОТКА СОХРАНЕНИЯ ТРЕНИРОВКИ ==========
-                    if data.get('type') == 'new_workout':
-                        workout = data.get('workout', {})
+                    if workout_id:
+                        logger.info(f"✅ Тренировка {workout_id} сохранена")
 
-                        logger.info(f"👤 Пользователь: {user_name} (ID: {user_id})")
-                        logger.info(f"💪 Название тренировки: {workout.get('name')}")
-                        logger.info(f"📊 Количество упражнений: {len(workout.get('exercises', []))}")
+                        # Отправляем подтверждение
+                        asyncio.run_coroutine_threadsafe(
+                            bot.send_message(
+                                chat_id=user_id,
+                                text=f"✅ <b>Тренировка сохранена!</b>\n\n"
+                                     f"🏛️ <b>{workout.get('name', 'Тренировка')}</b>\n"
+                                     f"📋 Упражнений: {len(workout.get('exercises', []))}",
+                                parse_mode="HTML"
+                            ),
+                            loop
+                        )
 
-                        # Сохраняем в базу данных
-                        try:
-                            workout_id = db.save_workout(
-                                user_id=user_id,
-                                workout_name=workout.get('name', 'Тренировка'),
-                                exercises=workout.get('exercises', [])
+                # ===== УДАЛЕНИЕ ТРЕНИРОВКИ =====
+                elif data.get('type') == 'delete_workout':
+                    workout_id = data.get('workout_id')
+                    logger.info(f"🗑️ Запрос на удаление тренировки {workout_id}")
+
+                    # Удаляем из базы
+                    with db.get_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute('DELETE FROM workouts WHERE id = ? AND user_id = ?',
+                                       (workout_id, user_id))
+                        conn.commit()
+
+                        if cursor.rowcount > 0:
+                            logger.info(f"✅ Тренировка {workout_id} удалена")
+
+                            # Отправляем подтверждение
+                            asyncio.run_coroutine_threadsafe(
+                                bot.send_message(
+                                    chat_id=user_id,
+                                    text=f"🗑️ <b>Тренировка удалена</b>\n\n"
+                                         f"ID: {workout_id}",
+                                    parse_mode="HTML"
+                                ),
+                                loop
                             )
+                        else:
+                            logger.warning(f"⚠️ Тренировка {workout_id} не найдена")
 
-                            if workout_id:
-                                logger.info(f"✅ ТРЕНИРОВКА УСПЕШНО СОХРАНЕНА! ID: {workout_id}")
+            except Exception as e:
+                logger.error(f"❌ Ошибка обработки данных: {e}")
 
-                                # Отправляем подтверждение пользователю
-                                asyncio.run_coroutine_threadsafe(
-                                    bot.send_message(
-                                        chat_id=user_id,
-                                        text=f"✅ <b>Тренировка сохранена!</b>\n\n"
-                                             f"🏛️ <b>{workout.get('name', 'Тренировка')}</b>\n"
-                                             f"📋 Упражнений: {len(workout.get('exercises', []))}\n"
-                                             f"🆔 ID: {workout_id}",
-                                        parse_mode="HTML"
-                                    ),
-                                    loop
-                                )
-                            else:
-                                logger.error("❌ Не удалось сохранить тренировку")
+        # Отправляем в основной обработчик
+        asyncio.run_coroutine_threadsafe(process_update(update_data), loop)
 
-                        except Exception as e:
-                            logger.error(f"❌ Ошибка сохранения в БД: {e}", exc_info=True)
-
-                    # ========== НОВАЯ ОБРАБОТКА УДАЛЕНИЯ ТРЕНИРОВКИ ==========
-                    elif data.get('type') == 'delete_workout':
-                        workout_id = data.get('workout_id')
-
-                        logger.info(f"🗑️ ЗАПРОС НА УДАЛЕНИЕ ТРЕНИРОВКИ {workout_id}")
-                        logger.info(f"👤 Пользователь: {user_name} (ID: {user_id})")
-
-                        # Удаляем тренировку из базы данных
-                        try:
-                            success = db.delete_workout(workout_id, user_id=user_id)
-
-                            if success:
-                                logger.info(f"✅ ТРЕНИРОВКА {workout_id} УСПЕШНО УДАЛЕНА")
-
-                                # Отправляем подтверждение пользователю
-                                asyncio.run_coroutine_threadsafe(
-                                    bot.send_message(
-                                        chat_id=user_id,
-                                        text=f"🗑️ <b>Тренировка удалена</b>\n\n"
-                                             f"ID: {workout_id}",
-                                        parse_mode="HTML"
-                                    ),
-                                    loop
-                                )
-                            else:
-                                logger.warning(f"⚠️ Не удалось удалить тренировку {workout_id}")
-
-                        except Exception as e:
-                            logger.error(f"❌ Ошибка удаления из БД: {e}", exc_info=True)
-
-                except json.JSONDecodeError as e:
-                    logger.error(f"❌ Ошибка парсинга JSON: {e}")
-                except Exception as e:
-                    logger.error(f"❌ Ошибка обработки данных Mini App: {e}", exc_info=True)
-
-        # Отправляем обработку в асинхронный цикл для обычных сообщений
-        asyncio.run_coroutine_threadsafe(
-            process_update(update_data),
-            loop
-        )
-
-        logger.info("✅ Webhook обработан успешно")
-        logger.info("=" * 50)
         return "ok", 200
-
     except Exception as e:
-        logger.error(f"❌ Критическая ошибка в webhook: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"❌ Ошибка webhook: {e}")
+        return "error", 500
 
 
 # ============================================
-# ЗАПУСК FLASK
+# ЗАПУСК
 # ============================================
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8000))
-    logger.info(f"🚀 Запуск Flask на порту {port}")
+    logger.info(f"🚀 Запуск на порту {port}")
     app.run(host='0.0.0.0', port=port)
