@@ -1,5 +1,5 @@
 """
-main.py - Полный код бота с удалением тренировок по дате
+main.py - Полный код бота с удалением тренировок по дате (исправленная версия)
 """
 
 import asyncio
@@ -115,7 +115,7 @@ except Exception as e:
 
 
 # ============================================
-# ОБРАБОТЧИК ВЕБХУКОВ С УДАЛЕНИЕМ ПО ДАТЕ
+# ОБРАБОТЧИК ВЕБХУКОВ С ИСПРАВЛЕННЫМ УДАЛЕНИЕМ
 # ============================================
 
 @app.route('/')
@@ -177,36 +177,37 @@ def webhook():
                             loop
                         )
 
-                # ===== УДАЛЕНИЕ ТРЕНИРОВКИ ПО ДАТЕ =====
+                # ===== УДАЛЕНИЕ ТРЕНИРОВКИ ПО ДАТЕ (ИСПРАВЛЕНО) =====
                 elif data.get('type') == 'delete_workout_by_date':
                     iso_date = data.get('date')
                     logger.info(f"🗑️ Удаление тренировки от {iso_date}")
 
-                    # Конвертируем ISO дату в формат SQLite
                     try:
-                        # Из "2026-03-03T18:28:37.277Z" в "2026-03-03 18:28:37"
+                        # Конвертируем ISO дату в datetime объект
                         date_obj = datetime.fromisoformat(iso_date.replace('Z', '+00:00'))
-                        sqlite_date = date_obj.strftime('%Y-%m-%d %H:%M:%S')
-                        logger.info(f"🔄 Конвертировано: {sqlite_date}")
+
+                        # Убираем миллисекунды для поиска в БД
+                        search_date = date_obj.strftime('%Y-%m-%d %H:%M:%S')
+                        logger.info(f"🔄 Ищем в БД: {search_date}")
 
                         with db.get_connection() as conn:
                             cursor = conn.cursor()
 
-                            # Находим тренировку
+                            # Ищем тренировку БЕЗ учёта миллисекунд
                             cursor.execute('''
-                                SELECT id, workout_name FROM workouts 
-                                WHERE user_id = ? AND workout_date = ?
-                            ''', (user_id, sqlite_date))
+                                SELECT id, workout_name, workout_date FROM workouts 
+                                WHERE user_id = ? AND strftime('%Y-%m-%d %H:%M:%S', workout_date) = ?
+                            ''', (user_id, search_date))
 
                             workout = cursor.fetchone()
 
                             if workout:
-                                logger.info(f"✅ Найдена: {workout[1]} (ID: {workout[0]})")
+                                logger.info(f"✅ Найдена: {workout[1]} (ID: {workout[0]}, Дата в БД: {workout[2]})")
 
                                 cursor.execute('''
                                     DELETE FROM workouts 
-                                    WHERE user_id = ? AND workout_date = ?
-                                ''', (user_id, sqlite_date))
+                                    WHERE id = ?
+                                ''', (workout[0],))
 
                                 conn.commit()
                                 logger.info(f"✅ Тренировка удалена")
@@ -220,18 +221,19 @@ def webhook():
                                     loop
                                 )
                             else:
-                                logger.warning(f"⚠️ Тренировка от {sqlite_date} не найдена")
+                                logger.warning(f"⚠️ Тренировка {search_date} не найдена")
 
-                                # Ищем похожие даты для отладки
+                                # Поиск похожих дат для отладки
+                                date_only = date_obj.strftime('%Y-%m-%d')
                                 cursor.execute('''
                                     SELECT workout_date FROM workouts 
-                                    WHERE user_id = ? AND DATE(workout_date) = DATE(?)
-                                    LIMIT 3
-                                ''', (user_id, sqlite_date))
+                                    WHERE user_id = ? AND DATE(workout_date) = ?
+                                    LIMIT 5
+                                ''', (user_id, date_only))
 
                                 similar = cursor.fetchall()
                                 if similar:
-                                    logger.info(f"📅 Похожие даты в БД:")
+                                    logger.info(f"📅 Тренировки за этот день:")
                                     for s in similar:
                                         logger.info(f"   - {s[0]}")
 
@@ -257,7 +259,7 @@ def webhook():
                         )
 
             except Exception as e:
-                logger.error(f"❌ Ошибка обработки: {e}")
+                logger.error(f"❌ Ошибка обработки данных: {e}")
 
         # Отправляем в основной обработчик
         asyncio.run_coroutine_threadsafe(process_update(update_data), loop)
@@ -284,14 +286,34 @@ async def cmd_check_db(message: Message):
     text += f"📚 Всего тренировок: {len(workouts)}\n\n"
 
     if workouts:
-        text += "<b>Последние тренировки:</b>\n"
-        for w in workouts[:5]:
-            date_str = w['date'][:16].replace('T', ' ') if 'T' in w['date'] else w['date']
-            text += f"• ID: {w['id']} — {w['name']} ({date_str})\n"
+        text += "<b>Последние тренировки (первые 5):</b>\n"
+        for i, w in enumerate(workouts[:5], 1):
+            # Форматируем дату для вывода
+            if 'T' in w['date']:
+                display_date = w['date'][:19].replace('T', ' ')
+            else:
+                display_date = w['date'][:19]
+            text += f"{i}. ID: {w['id']} — {w['name']} ({display_date})\n"
     else:
         text += "❌ Тренировок пока нет\n"
 
     await message.answer(text, parse_mode="HTML")
+
+
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    """Помощь по командам"""
+    help_text = """
+<b>🤖 Доступные команды:</b>
+
+/start - Запустить бота
+/help - Показать эту помощь
+/check_db - Проверить базу данных
+
+<b>📱 Mini App:</b>
+Открой приложение через кнопку в меню
+    """
+    await message.answer(help_text, parse_mode="HTML")
 
 
 # ============================================
