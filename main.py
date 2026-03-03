@@ -1,5 +1,5 @@
 """
-main.py - Полный код бота с сохранением и удалением тренировок по ID
+main.py - Полный код бота с сохранением и удалением тренировок по дате
 """
 
 import asyncio
@@ -115,7 +115,7 @@ except Exception as e:
 
 
 # ============================================
-# ОБРАБОТЧИК ВЕБХУКОВ (ПОЛНАЯ ВЕРСИЯ)
+# ОБРАБОТЧИК ВЕБХУКОВ (СОХРАНЕНИЕ И УДАЛЕНИЕ ПО ДАТЕ)
 # ============================================
 
 @app.route('/')
@@ -138,7 +138,7 @@ def health():
 
 @app.route(WEBHOOK_PATH, methods=['POST'])
 def webhook():
-    """Обработка вебхуков от Telegram с сохранением и удалением тренировок"""
+    """Обработка вебхуков от Telegram"""
     try:
         update_data = request.get_json()
         logger.info("=" * 60)
@@ -151,23 +151,18 @@ def webhook():
             user_name = update_data['message']['from'].get('first_name', 'Герой')
 
             logger.info(f"🎯 Данные от Mini App от {user_name} (ID: {user_id})")
-            logger.info(f"📄 Сырые данные: {web_app_data}")
 
             try:
                 data = json.loads(web_app_data['data'])
-                logger.info(f"🔍 Распарсенные данные: {json.dumps(data, ensure_ascii=False, indent=2)}")
+                logger.info(f"🔍 Тип данных: {data.get('type')}")
 
                 # ===== СОХРАНЕНИЕ ТРЕНИРОВКИ =====
                 if data.get('type') == 'new_workout':
                     workout = data.get('workout', {})
-                    client_id = workout.get('client_id')
 
-                    logger.info(f"💾 СОХРАНЕНИЕ тренировки для {user_name}")
-                    logger.info(f"📝 Название: {workout.get('name')}")
+                    logger.info(f"💾 СОХРАНЕНИЕ тренировки: {workout.get('name')}")
                     logger.info(f"📊 Упражнений: {len(workout.get('exercises', []))}")
-                    logger.info(f"🆔 Клиентский ID: {client_id}")
 
-                    # Сохраняем в базу данных
                     workout_id = db.save_workout(
                         user_id=user_id,
                         workout_name=workout.get('name', 'Тренировка'),
@@ -175,81 +170,70 @@ def webhook():
                     )
 
                     if workout_id:
-                        logger.info(f"✅ ТРЕНИРОВКА СОХРАНЕНА! ID в БД: {workout_id}")
+                        logger.info(f"✅ Тренировка сохранена с ID {workout_id}")
 
-                        # Отправляем подтверждение пользователю в Telegram
+                        # Отправляем подтверждение
                         asyncio.run_coroutine_threadsafe(
                             bot.send_message(
                                 chat_id=user_id,
                                 text=f"✅ <b>Тренировка сохранена!</b>\n\n"
                                      f"🏛️ <b>{workout.get('name', 'Тренировка')}</b>\n"
-                                     f"📋 Упражнений: {len(workout.get('exercises', []))}\n"
-                                     f"🆔 ID: {workout_id}",
+                                     f"📋 Упражнений: {len(workout.get('exercises', []))}",
                                 parse_mode="HTML"
                             ),
                             loop
                         )
 
-                        # Здесь можно отправить обратно в Mini App реальный ID
-                        # но для этого нужен отдельный механизм
-                        logger.info(f"🔄 Клиентский ID: {client_id} -> Реальный ID: {workout_id}")
-                    else:
-                        logger.error("❌ Не удалось сохранить тренировку")
+                # ===== УДАЛЕНИЕ ТРЕНИРОВКИ ПО ДАТЕ =====
+                elif data.get('type') == 'delete_workout_by_date':
+                    workout_date = data.get('date')
+                    logger.info(f"🗑️ ЗАПРОС НА УДАЛЕНИЕ ТРЕНИРОВКИ ОТ {workout_date}")
 
-                # ===== УДАЛЕНИЕ ТРЕНИРОВКИ =====
-                elif data.get('type') == 'delete_workout':
-                    workout_id = data.get('workout_id')
-                    logger.info(f"🗑️ ЗАПРОС НА УДАЛЕНИЕ тренировки {workout_id} от {user_name}")
-
-                    # Удаляем из базы данных
+                    # Удаляем из базы по дате
                     with db.get_connection() as conn:
                         cursor = conn.cursor()
 
-                        # Сначала проверяем, существует ли тренировка и принадлежит ли она пользователю
+                        # Сначала находим тренировку
                         cursor.execute('''
                             SELECT id, workout_name FROM workouts 
-                            WHERE id = ? AND user_id = ?
-                        ''', (workout_id, user_id))
+                            WHERE user_id = ? AND workout_date LIKE ?
+                        ''', (user_id, f"{workout_date}%"))
 
-                        workout = cursor.fetchone()
+                        workouts = cursor.fetchall()
 
-                        if workout:
-                            logger.info(f"✅ Тренировка найдена в БД: ID={workout[0]}, Название={workout[1]}")
+                        if workouts:
+                            logger.info(f"✅ Найдено {len(workouts)} тренировок:")
+                            for w in workouts:
+                                logger.info(f"   - ID: {w[0]}, Название: {w[1]}")
 
                             # Удаляем тренировку
                             cursor.execute('''
                                 DELETE FROM workouts 
-                                WHERE id = ? AND user_id = ?
-                            ''', (workout_id, user_id))
+                                WHERE user_id = ? AND workout_date LIKE ?
+                            ''', (user_id, f"{workout_date}%"))
 
                             conn.commit()
+                            deleted_count = cursor.rowcount
+                            logger.info(f"✅ Удалено {deleted_count} тренировок")
 
-                            if cursor.rowcount > 0:
-                                logger.info(f"✅ ТРЕНИРОВКА {workout_id} УСПЕШНО УДАЛЕНА из БД")
-
-                                # Отправляем подтверждение пользователю в Telegram
-                                asyncio.run_coroutine_threadsafe(
-                                    bot.send_message(
-                                        chat_id=user_id,
-                                        text=f"🗑️ <b>Тренировка удалена</b>\n\n"
-                                             f"🏛️ <b>{workout[1]}</b>\n"
-                                             f"🆔 ID: {workout_id}",
-                                        parse_mode="HTML"
-                                    ),
-                                    loop
-                                )
-                            else:
-                                logger.error(f"❌ Не удалось удалить тренировку {workout_id}")
+                            # Отправляем подтверждение
+                            asyncio.run_coroutine_threadsafe(
+                                bot.send_message(
+                                    chat_id=user_id,
+                                    text=f"🗑️ <b>Тренировка удалена</b>",
+                                    parse_mode="HTML"
+                                ),
+                                loop
+                            )
                         else:
-                            logger.warning(
-                                f"⚠️ Тренировка {workout_id} не найдена в БД или принадлежит другому пользователю")
+                            logger.warning(f"⚠️ Тренировка от {workout_date} не найдена")
 
                             # Отправляем уведомление об ошибке
                             asyncio.run_coroutine_threadsafe(
                                 bot.send_message(
                                     chat_id=user_id,
                                     text=f"❌ <b>Ошибка удаления</b>\n\n"
-                                         f"Тренировка с ID {workout_id} не найдена в базе данных",
+                                         f"Тренировка от {workout_date} не найдена",
                                     parse_mode="HTML"
                                 ),
                                 loop
@@ -263,7 +247,7 @@ def webhook():
             except Exception as e:
                 logger.error(f"❌ Ошибка обработки данных: {e}", exc_info=True)
 
-        # Отправляем в основной обработчик для обычных сообщений
+        # Отправляем в основной обработчик
         asyncio.run_coroutine_threadsafe(process_update(update_data), loop)
 
         logger.info("✅ Webhook обработан успешно")
@@ -271,33 +255,51 @@ def webhook():
         return "ok", 200
 
     except Exception as e:
-        logger.error(f"❌ Критическая ошибка в webhook: {e}", exc_info=True)
+        logger.error(f"❌ Критическая ошибка: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
 # ============================================
-# ДОПОЛНИТЕЛЬНЫЕ КОМАНДЫ ДЛЯ ТЕСТИРОВАНИЯ
+# КОМАНДЫ ДЛЯ ТЕСТИРОВАНИЯ
 # ============================================
 
 @dp.message(Command("check_db"))
 async def cmd_check_db(message: Message):
     """Проверить содержимое базы данных"""
     user_id = message.from_user.id
-    workouts = db.get_user_workouts(user_id, limit=10)
+    workouts = db.get_user_workouts(user_id, limit=20)
 
     text = f"📊 <b>База данных для {message.from_user.first_name}</b>\n\n"
     text += f"👤 User ID: <code>{user_id}</code>\n"
     text += f"📚 Всего тренировок: {len(workouts)}\n\n"
 
     if workouts:
-        text += "<b>Тренировки в БД:</b>\n"
-        for w in workouts:
-            date = w['date'][:10] if w.get('date') else 'неизвестно'
-            text += f"• ID: {w['id']} — {w['name']} ({date})\n"
+        text += "<b>Последние тренировки:</b>\n"
+        for w in workouts[:5]:
+            date = w['date'][:16].replace('T', ' ') if w.get('date') else 'неизвестно'
+            text += f"• {w['name']} ({date})\n"
     else:
-        text += "❌ Тренировок пока нет!\n"
+        text += "❌ Тренировок пока нет\n"
 
     await message.answer(text, parse_mode="HTML")
+
+
+@dp.message(Command("clear_today"))
+async def cmd_clear_today(message: Message):
+    """Очистить сегодняшние тренировки (для теста)"""
+    user_id = message.from_user.id
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            DELETE FROM workouts 
+            WHERE user_id = ? AND DATE(workout_date) = ?
+        ''', (user_id, today))
+        conn.commit()
+        deleted = cursor.rowcount
+
+    await message.answer(f"✅ Удалено {deleted} тренировок за сегодня")
 
 
 # ============================================
