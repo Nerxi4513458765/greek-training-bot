@@ -25,7 +25,7 @@ class Database:
         return sqlite3.connect(self.db_name)
 
     def init_db(self):
-        """Создание таблиц, если их нет (с поддержкой названий тренировок)"""
+        """Создание таблиц, если их нет"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -41,66 +41,18 @@ class Database:
                     )
                 ''')
 
-                # Проверяем, существует ли таблица workouts
+                # Таблица тренировок
                 cursor.execute('''
-                    SELECT name FROM sqlite_master 
-                    WHERE type='table' AND name='workouts'
+                    CREATE TABLE IF NOT EXISTS workouts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        workout_name TEXT NOT NULL DEFAULT 'Тренировка',
+                        workout_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        exercises TEXT NOT NULL,
+                        notes TEXT,
+                        FOREIGN KEY (user_id) REFERENCES users (user_id)
+                    )
                 ''')
-                table_exists = cursor.fetchone()
-
-                if table_exists:
-                    # Проверяем структуру существующей таблицы
-                    cursor.execute('PRAGMA table_info(workouts)')
-                    columns = cursor.fetchall()
-                    column_names = [col[1] for col in columns]
-
-                    # Если нет колонки workout_name - пересоздаём таблицу
-                    if 'workout_name' not in column_names:
-                        logger.warning("⚠️ Обновляем структуру таблицы workouts...")
-
-                        # Переименовываем старую таблицу
-                        cursor.execute('ALTER TABLE workouts RENAME TO workouts_old')
-
-                        # Создаём новую таблицу с нужной структурой
-                        cursor.execute('''
-                            CREATE TABLE workouts (
-                                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                user_id INTEGER NOT NULL,
-                                workout_name TEXT NOT NULL DEFAULT 'Тренировка',
-                                workout_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                                exercises TEXT NOT NULL,
-                                notes TEXT,
-                                FOREIGN KEY (user_id) REFERENCES users (user_id)
-                            )
-                        ''')
-
-                        # Переносим данные из старой таблицы (если есть)
-                        try:
-                            cursor.execute('''
-                                INSERT INTO workouts (id, user_id, workout_date, exercises)
-                                SELECT id, user_id, workout_date, exercises 
-                                FROM workouts_old
-                            ''')
-                            logger.info("✅ Данные перенесены в новую таблицу")
-                        except Exception as e:
-                            logger.error(f"❌ Ошибка переноса данных: {e}")
-
-                        # Удаляем старую таблицу
-                        cursor.execute('DROP TABLE IF EXISTS workouts_old')
-                else:
-                    # Создаём новую таблицу с правильной структурой
-                    cursor.execute('''
-                        CREATE TABLE workouts (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            user_id INTEGER NOT NULL,
-                            workout_name TEXT NOT NULL DEFAULT 'Тренировка',
-                            workout_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            exercises TEXT NOT NULL,
-                            notes TEXT,
-                            FOREIGN KEY (user_id) REFERENCES users (user_id)
-                        )
-                    ''')
-                    logger.info("✅ Таблица workouts создана")
 
                 # Таблица для шаблонов тренировок
                 cursor.execute('''
@@ -141,23 +93,26 @@ class Database:
             return False
 
     def save_workout(self, user_id, workout_name, exercises):
-        """Сохранить тренировку с названием"""
+        """Сохранить тренировку в базу данных"""
         try:
-            # Преобразуем список упражнений в JSON строку
-            exercises_json = json.dumps(exercises, ensure_ascii=False)
-
-            logger.info(f"💾 Сохраняем тренировку для user {user_id}")
+            logger.info(f"💾 Попытка сохранить тренировку для user {user_id}")
             logger.info(f"📝 Название: {workout_name}")
             logger.info(f"📊 Упражнений: {len(exercises)}")
+
+            # Преобразуем упражнения в JSON
+            exercises_json = json.dumps(exercises, ensure_ascii=False)
+            logger.info(f"🔧 JSON упражнений: {exercises_json[:200]}...")
 
             with self.get_connection() as conn:
                 cursor = conn.cursor()
 
-                # Проверяем существование пользователя
+                # Проверяем, существует ли пользователь
                 cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
                 if not cursor.fetchone():
                     logger.warning(f"⚠️ Пользователь {user_id} не найден, создаём...")
-                    self.add_user(user_id)
+                    cursor.execute('''
+                        INSERT INTO users (user_id) VALUES (?)
+                    ''', (user_id,))
 
                 # Вставляем тренировку
                 cursor.execute('''
@@ -167,22 +122,18 @@ class Database:
 
                 conn.commit()
                 workout_id = cursor.lastrowid
-
-                logger.info(f"✅ Тренировка {workout_id} сохранена в БД")
+                logger.info(f"✅ Тренировка {workout_id} успешно сохранена в БД")
 
                 # Проверяем, что запись действительно есть
                 cursor.execute('SELECT * FROM workouts WHERE id = ?', (workout_id,))
                 result = cursor.fetchone()
-                if result:
-                    logger.info(f"✅ Проверка: тренировка {workout_id} найдена")
-                else:
-                    logger.error(f"❌ Тренировка {workout_id} не найдена после сохранения!")
+                logger.info(f"🔍 Проверка: тренировка {workout_id} найдена")
 
                 return workout_id
 
         except Exception as e:
-            logger.error(f"❌ Ошибка сохранения тренировки: {e}")
-            raise
+            logger.error(f"❌ Ошибка сохранения тренировки: {e}", exc_info=True)
+            return None
 
     def get_user_workouts(self, user_id, limit=20):
         """Получить все тренировки пользователя"""
@@ -191,13 +142,6 @@ class Database:
 
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-
-                # Проверяем существование пользователя
-                cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
-                user = cursor.fetchone()
-                logger.info(f"👤 Пользователь в БД: {user}")
-
-                # Получаем тренировки
                 cursor.execute('''
                     SELECT id, workout_name, workout_date, exercises, notes
                     FROM workouts
@@ -220,11 +164,8 @@ class Database:
                             'notes': row[4] or ''
                         }
                         workouts.append(workout)
-                        logger.info(
-                            f"  • Тренировка {workout['id']}: {workout['name']} ({len(workout['exercises'])} упр.)")
                     except Exception as e:
                         logger.error(f"❌ Ошибка парсинга тренировки {row[0]}: {e}")
-                        # Добавляем с пустыми упражнениями, чтобы не ломать вывод
                         workouts.append({
                             'id': row[0],
                             'name': row[1] or 'Тренировка',
@@ -239,112 +180,9 @@ class Database:
             logger.error(f"❌ Ошибка получения тренировок: {e}")
             return []
 
-    def get_workout_by_id(self, workout_id):
-        """Получить конкретную тренировку по ID"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT id, user_id, workout_name, workout_date, exercises, notes
-                    FROM workouts
-                    WHERE id = ?
-                ''', (workout_id,))
-
-                row = cursor.fetchone()
-                if row:
-                    return {
-                        'id': row[0],
-                        'user_id': row[1],
-                        'name': row[2] or 'Тренировка',
-                        'date': row[3],
-                        'exercises': json.loads(row[4]) if row[4] else [],
-                        'notes': row[5] or ''
-                    }
-                return None
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения тренировки {workout_id}: {e}")
-            return None
-
-    def update_workout_name(self, workout_id, new_name):
-        """Изменить название тренировки"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    UPDATE workouts SET workout_name = ? WHERE id = ?
-                ''', (new_name, workout_id))
-                conn.commit()
-                logger.info(f"✅ Название тренировки {workout_id} изменено на '{new_name}'")
-                return True
-        except Exception as e:
-            logger.error(f"❌ Ошибка изменения названия: {e}")
-            return False
-
-    def delete_workout(self, workout_id):
-        """Удалить тренировку"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('DELETE FROM workouts WHERE id = ?', (workout_id,))
-                conn.commit()
-                logger.info(f"✅ Тренировка {workout_id} удалена")
-                return True
-        except Exception as e:
-            logger.error(f"❌ Ошибка удаления тренировки: {e}")
-            return False
-
-    def save_template(self, user_id, template_name, exercises):
-        """Сохранить шаблон тренировки"""
-        try:
-            exercises_json = json.dumps(exercises, ensure_ascii=False)
-
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO workout_templates (user_id, template_name, exercises)
-                    VALUES (?, ?, ?)
-                ''', (user_id, template_name, exercises_json))
-                conn.commit()
-                template_id = cursor.lastrowid
-                logger.info(f"✅ Шаблон '{template_name}' сохранён (ID: {template_id})")
-                return template_id
-        except Exception as e:
-            logger.error(f"❌ Ошибка сохранения шаблона: {e}")
-            return None
-
-    def get_templates(self, user_id):
-        """Получить все шаблоны пользователя"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT id, template_name, exercises, created_at
-                    FROM workout_templates
-                    WHERE user_id = ?
-                    ORDER BY created_at DESC
-                ''', (user_id,))
-
-                templates = []
-                for row in cursor.fetchall():
-                    template = {
-                        'id': row[0],
-                        'name': row[1],
-                        'exercises': json.loads(row[2]) if row[2] else [],
-                        'created_at': row[3]
-                    }
-                    templates.append(template)
-
-                logger.info(f"📋 Загружено {len(templates)} шаблонов для user {user_id}")
-                return templates
-        except Exception as e:
-            logger.error(f"❌ Ошибка загрузки шаблонов: {e}")
-            return []
-
     def get_workout_stats(self, user_id):
         """Получить статистику тренировок"""
         try:
-            logger.info(f"📊 Запрос статистики для пользователя {user_id}")
-
             with self.get_connection() as conn:
                 cursor = conn.cursor()
 
@@ -405,18 +243,3 @@ class Database:
                 'last_workout': None,
                 'last_workout_name': None
             }
-
-    def clear_user_data(self, user_id):
-        """Очистить все данные пользователя (для тестирования)"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('DELETE FROM workouts WHERE user_id = ?', (user_id,))
-                cursor.execute('DELETE FROM workout_templates WHERE user_id = ?', (user_id,))
-                cursor.execute('DELETE FROM users WHERE user_id = ?', (user_id,))
-                conn.commit()
-                logger.info(f"✅ Данные пользователя {user_id} очищены")
-                return True
-        except Exception as e:
-            logger.error(f"❌ Ошибка очистки данных: {e}")
-            return False
