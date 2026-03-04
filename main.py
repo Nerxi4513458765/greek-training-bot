@@ -1,5 +1,5 @@
 """
-main.py - Полный код бота с тотальным логированием эндпоинта /get_plan
+main.py - Полный код бота с исправлением user_id
 """
 
 import asyncio
@@ -129,65 +129,73 @@ def health():
     })
 
 
-# ===== ЭНДПОИНТ ДЛЯ ГЕНЕРАЦИИ ПЛАНА С ТОТАЛЬНЫМ ЛОГИРОВАНИЕМ =====
+# ===== ЭНДПОИНТ ДЛЯ ГЕНЕРАЦИИ ПЛАНА =====
 @app.route('/get_plan', methods=['POST', 'OPTIONS'])
 def get_plan():
-    # --- Логируем абсолютно всё, что пришло ---
     print("\n" + "=" * 60)
     print("🔥🔥🔥 ЗАПРОС НА /get_plan ПОЛУЧЕН 🔥🔥🔥")
     print(f"Метод запроса: {request.method}")
     print(f"Заголовки запроса: {dict(request.headers)}")
 
-    # Обработка CORS (preflight-запрос OPTIONS)
     if request.method == 'OPTIONS':
-        print("⚙️ Это preflight-запрос OPTIONS. Отправляем заголовки CORS.")
+        print("⚙️ Preflight запрос")
         response = jsonify({'status': 'preflight ok'})
         response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
         response.headers.add('Access-Control-Allow-Methods', 'POST')
         return response, 200
 
-    # --- Это POST-запрос ---
     try:
-        # Логируем сырые данные
         print("📦 Получен POST-запрос")
+
         raw_data = request.get_data(as_text=True)
         print(f"Сырые данные: {raw_data}")
 
-        # Парсим JSON
+        if not raw_data:
+            print("❌ Пустые данные!")
+            response = jsonify({'success': False, 'error': 'Empty request'})
+            response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
+            return response, 400
+
         data = request.get_json()
         print(f"Распарсенный JSON: {data}")
+
+        if not data:
+            print("❌ Не удалось распарсить JSON!")
+            response = jsonify({'success': False, 'error': 'Invalid JSON'})
+            response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
+            return response, 400
 
         user_id = data.get('user_id')
         focus = data.get('focus', 'все')
 
-        print(f"📋 Параметры: user_id={user_id}, focus={focus}")
+        print(f"Параметры: user_id={user_id}, focus={focus}")
 
-        if not user_id:
-            print("❌ Ошибка: Нет user_id")
-            response = jsonify({'success': False, 'error': 'user_id required'})
+        if user_id is None:
+            print("❌ НЕТ USER_ID В ДАННЫХ!")
+            response = jsonify({'success': False, 'error': 'user_id is required'})
             response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
             return response, 400
 
+        # Разрешаем user_id = 0 для тестов в браузере
+        if user_id == 0:
+            print("⚠️ Тестовый режим: user_id = 0, используем заглушку")
+            user_id = 12345
+
         # Генерируем план
-        print("⚙️ Вызываем db.generate_weekly_plan()...")
+        print("⚙️ Генерируем план...")
         plan = db.generate_weekly_plan(user_id, focus)
-        print(f"✅ План сгенерирован. Ключи плана: {plan.keys() if plan else 'None'}")
+        print(f"✅ План сгенерирован")
 
-        # Логируем первый день для проверки структуры
-        if plan and 'понедельник' in plan:
-            print(f"📅 Пример дня (понедельник): {plan['понедельник']}")
-
-        # Формируем ответ
         response_data = {'success': True, 'plan': plan}
-        print(f"📤 Отправляем ответ: {response_data}")
+        print(f"📤 Отправляем ответ")
 
         response = jsonify(response_data)
         response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
         return response, 200
 
     except Exception as e:
-        print(f"❌❌❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        print(f"❌❌❌ ОШИБКА: {e}")
         import traceback
         traceback.print_exc()
         response = jsonify({'success': False, 'error': str(e)})
