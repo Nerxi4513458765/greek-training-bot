@@ -1,5 +1,5 @@
 """
-main.py - Полный код бота с разделом Тренер
+main.py - Полный код бота с разделом Тренер и эндпоинтом для планов
 """
 
 import asyncio
@@ -129,6 +129,32 @@ def health():
     })
 
 
+# ===== НОВЫЙ ЭНДПОИНТ ДЛЯ ГЕНЕРАЦИИ ПЛАНА =====
+@app.route('/get_plan', methods=['POST'])
+def get_plan():
+    """Отдельный эндпоинт для получения плана тренировок"""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        focus = data.get('focus', 'все')
+
+        logger.info(f"📋 Запрос плана через эндпоинт: user={user_id}, focus={focus}")
+
+        if not user_id:
+            return jsonify({'success': False, 'error': 'user_id required'}), 400
+
+        plan = db.generate_weekly_plan(user_id, focus)
+
+        return jsonify({
+            'success': True,
+            'plan': plan
+        })
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка генерации плана: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route(WEBHOOK_PATH, methods=['POST'])
 def webhook():
     try:
@@ -195,35 +221,6 @@ def webhook():
                         else:
                             logger.warning(f"⚠️ Тренировки не найдены")
 
-                # ===== ГЕНЕРАЦИЯ ПЛАНА =====
-                elif data.get('type') == 'get_plan':
-                    focus = data.get('focus', 'все')
-                    logger.info(f"📋 Генерация плана для {user_name} с фокусом: {focus}")
-
-                    plan = db.generate_weekly_plan(user_id, focus)
-
-                    # Отправляем план в личку (временное решение)
-                    plan_summary = f"📋 Твой план на неделю (фокус: {focus}):\n\n"
-                    days = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье']
-
-                    for day in days:
-                        if day in plan and plan[day]['exercises']:
-                            plan_summary += f"📅 {plan[day]['name']}:\n"
-                            for ex in plan[day]['exercises'][:3]:
-                                plan_summary += f"  • {ex['name']} - {ex['sets']}x{ex['reps']}\n"
-                            if len(plan[day]['exercises']) > 3:
-                                plan_summary += f"  ... и ещё {len(plan[day]['exercises']) - 3}\n"
-                            plan_summary += "\n"
-
-                    asyncio.run_coroutine_threadsafe(
-                        bot.send_message(
-                            chat_id=user_id,
-                            text=plan_summary,
-                            parse_mode="HTML"
-                        ),
-                        loop
-                    )
-
             except Exception as e:
                 logger.error(f"❌ Ошибка обработки данных: {e}")
 
@@ -233,6 +230,30 @@ def webhook():
     except Exception as e:
         logger.error(f"❌ Критическая ошибка: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+# ============================================
+# КОМАНДЫ ДЛЯ ТЕСТИРОВАНИЯ
+# ============================================
+
+@dp.message(Command("check_db"))
+async def cmd_check_db(message: Message):
+    """Проверить содержимое базы данных"""
+    user_id = message.from_user.id
+    workouts = db.get_user_workouts(user_id, limit=10)
+
+    text = f"📊 <b>База данных для {message.from_user.first_name}</b>\n\n"
+    text += f"👤 User ID: <code>{user_id}</code>\n"
+    text += f"📚 Всего тренировок: {len(workouts)}\n\n"
+
+    if workouts:
+        text += "<b>Последние тренировки:</b>\n"
+        for w in workouts[:5]:
+            text += f"• ID: {w['id']} — {w['name']}\n"
+    else:
+        text += "❌ Тренировок пока нет\n"
+
+    await message.answer(text, parse_mode="HTML")
 
 
 # ============================================
