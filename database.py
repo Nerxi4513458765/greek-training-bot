@@ -1,5 +1,5 @@
 """
-database.py - База данных с библиотекой упражнений и генератором планов
+database.py - Полная версия с библиотекой упражнений и всеми методами
 """
 
 import sqlite3
@@ -80,6 +80,25 @@ class Database:
             conn.commit()
             logger.info("✅ Все таблицы созданы")
 
+    def add_user(self, user_id, username=None, first_name=None, last_name=None):
+        """Добавить нового пользователя или обновить существующего"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO users (user_id, username, first_name, last_name, created_at)
+                    VALUES (?, ?, ?, ?, COALESCE(
+                        (SELECT created_at FROM users WHERE user_id = ?),
+                        CURRENT_TIMESTAMP
+                    ))
+                ''', (user_id, username, first_name, last_name, user_id))
+                conn.commit()
+                logger.info(f"✅ Пользователь {user_id} добавлен/обновлён")
+                return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка добавления пользователя {user_id}: {e}")
+            return False
+
     def init_exercises_library(self):
         """Заполняем библиотеку упражнений"""
         exercises = [
@@ -89,7 +108,6 @@ class Database:
             ('грудь', 'Сведение рук в кроссовере', 'Изолированная работа', 3, 15, 'easy', 'тренажёр'),
             ('грудь', 'Отжимания на брусьях', 'Низ груди и трицепс', 3, 10, 'hard', 'брусья'),
             ('грудь', 'Жим в хаммере', 'Машина для грудных', 3, 12, 'easy', 'тренажёр'),
-            ('грудь', 'Пуловер с гантелью', 'Растяжка грудных', 3, 15, 'easy', 'гантели'),
 
             # СПИНА
             ('спина', 'Подтягивания широким хватом', 'Ширина спины', 4, 8, 'hard', 'турник'),
@@ -97,7 +115,6 @@ class Database:
             ('спина', 'Тяга верхнего блока', 'Широчайшие мышцы', 3, 12, 'easy', 'тренажёр'),
             ('спина', 'Тяга гантели к поясу', 'Детализация', 3, 12, 'medium', 'гантели'),
             ('спина', 'Мёртвая тяга', 'Вся спина и ноги', 5, 5, 'hard', 'штанга'),
-            ('спина', 'Шраги с гантелями', 'Трапеции', 3, 15, 'easy', 'гантели'),
 
             # НОГИ
             ('ноги', 'Приседания со штангой', 'Квадрицепс, ягодицы', 5, 8, 'hard', 'штанга'),
@@ -105,7 +122,6 @@ class Database:
             ('ноги', 'Жим ногами', 'Масса ног', 3, 15, 'easy', 'тренажёр'),
             ('ноги', 'Выпады с гантелями', 'Ягодицы', 3, 12, 'medium', 'гантели'),
             ('ноги', 'Сгибания ног лёжа', 'Бицепс бедра', 3, 15, 'easy', 'тренажёр'),
-            ('ноги', 'Разгибания ног сидя', 'Квадрицепс', 3, 15, 'easy', 'тренажёр'),
 
             # ПЛЕЧИ
             ('плечи', 'Армейский жим стоя', 'Передняя и средняя дельта', 4, 8, 'hard', 'штанга'),
@@ -139,6 +155,55 @@ class Database:
             conn.commit()
             logger.info(f"✅ Библиотека упражнений заполнена ({len(exercises)} упражнений)")
 
+    def save_workout(self, user_id, workout_name, exercises):
+        """Сохранить тренировку"""
+        try:
+            exercises_json = json.dumps(exercises, ensure_ascii=False)
+
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Проверяем существование пользователя
+                cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
+                if not cursor.fetchone():
+                    self.add_user(user_id)
+
+                cursor.execute('''
+                    INSERT INTO workouts (user_id, workout_name, exercises)
+                    VALUES (?, ?, ?)
+                ''', (user_id, workout_name, exercises_json))
+
+                conn.commit()
+                workout_id = cursor.lastrowid
+                logger.info(f"✅ Тренировка {workout_id} сохранена")
+                return workout_id
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка сохранения тренировки: {e}")
+            return None
+
+    def get_user_workouts(self, user_id, limit=20):
+        """Получить тренировки пользователя"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, workout_name, workout_date, exercises
+                FROM workouts
+                WHERE user_id = ?
+                ORDER BY workout_date DESC
+                LIMIT ?
+            ''', (user_id, limit))
+
+            workouts = []
+            for row in cursor.fetchall():
+                workouts.append({
+                    'id': row[0],
+                    'name': row[1],
+                    'date': row[2],
+                    'exercises': json.loads(row[3]) if row[3] else []
+                })
+            return workouts
+
     def get_exercises_by_muscle(self, muscle_group, limit=4):
         """Получить упражнения для группы мышц"""
         with self.get_connection() as conn:
@@ -171,7 +236,6 @@ class Database:
     def generate_weekly_plan(self, user_id, focus='все'):
         """Сгенерировать план на неделю"""
 
-        # Базовая структура сплита
         if focus == 'грудь':
             plan = {
                 'понедельник': {
@@ -268,41 +332,19 @@ class Database:
 
         return plan
 
-    def save_workout(self, user_id, workout_name, exercises):
-        """Сохранить тренировку"""
-        try:
-            exercises_json = json.dumps(exercises, ensure_ascii=False)
+    def get_workout_stats(self, user_id):
+        """Получить статистику пользователя"""
+        workouts = self.get_user_workouts(user_id, limit=1000)
 
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO workouts (user_id, workout_name, exercises)
-                    VALUES (?, ?, ?)
-                ''', (user_id, workout_name, exercises_json))
-                conn.commit()
-                return cursor.lastrowid
-        except Exception as e:
-            logger.error(f"❌ Ошибка сохранения: {e}")
-            return None
+        total_workouts = len(workouts)
+        total_exercises = sum(len(w['exercises']) for w in workouts)
+        total_weight = sum(
+            ex.get('weight', 0) * ex.get('sets', 0) * ex.get('reps', 0)
+            for w in workouts for ex in w['exercises']
+        )
 
-    def get_user_workouts(self, user_id, limit=20):
-        """Получить тренировки пользователя"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT id, workout_name, workout_date, exercises
-                FROM workouts
-                WHERE user_id = ?
-                ORDER BY workout_date DESC
-                LIMIT ?
-            ''', (user_id, limit))
-
-            workouts = []
-            for row in cursor.fetchall():
-                workouts.append({
-                    'id': row[0],
-                    'name': row[1],
-                    'date': row[2],
-                    'exercises': json.loads(row[3])
-                })
-            return workouts
+        return {
+            'total_workouts': total_workouts,
+            'total_exercises': total_exercises,
+            'total_weight': round(total_weight, 1)
+        }
