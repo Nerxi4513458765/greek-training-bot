@@ -236,99 +236,76 @@ class Database:
     def generate_weekly_plan(self, user_id, focus='все'):
         """Сгенерировать план на неделю"""
 
+        logger.info(f"📋 Генерация плана для user {user_id} с фокусом: {focus}")
+
+        # Базовая структура для всех дней
+        plan = {
+            'понедельник': {'name': 'Понедельник', 'exercises': []},
+            'вторник': {'name': 'Вторник', 'exercises': []},
+            'среда': {'name': 'Среда', 'exercises': []},
+            'четверг': {'name': 'Четверг', 'exercises': []},
+            'пятница': {'name': 'Пятница', 'exercises': []},
+            'суббота': {'name': 'Суббота', 'exercises': []},
+            'воскресенье': {'name': 'Воскресенье', 'exercises': []}
+        }
+
         if focus == 'грудь':
-            plan = {
-                'понедельник': {
-                    'name': 'Грудь + Трицепс',
-                    'exercises': (
-                            self.generate_workout('грудь', 'hard') +
-                            self.generate_workout('трицепс', 'medium')
-                    )
-                },
-                'вторник': {'name': 'Отдых', 'exercises': []},
-                'среда': {
-                    'name': 'Спина + Бицепс',
-                    'exercises': (
-                            self.generate_workout('спина', 'medium') +
-                            self.generate_workout('бицепс', 'medium')
-                    )
-                },
-                'четверг': {'name': 'Отдых', 'exercises': []},
-                'пятница': {
-                    'name': 'Ноги + Плечи',
-                    'exercises': (
-                            self.generate_workout('ноги', 'hard') +
-                            self.generate_workout('плечи', 'medium')
-                    )
-                },
-                'суббота': {
-                    'name': 'Акцент на грудь',
-                    'exercises': self.generate_workout('грудь', 'medium')
-                },
-                'воскресенье': {'name': 'Отдых', 'exercises': []}
-            }
+            plan['понедельник']['exercises'] = self.generate_workout('грудь', 'hard') + self.generate_workout('трицепс',
+                                                                                                              'medium')
+            plan['среда']['exercises'] = self.generate_workout('спина', 'medium') + self.generate_workout('бицепс',
+                                                                                                          'medium')
+            plan['пятница']['exercises'] = self.generate_workout('ноги', 'hard') + self.generate_workout('плечи',
+                                                                                                         'medium')
+            plan['суббота']['exercises'] = self.generate_workout('грудь', 'medium')
+
         elif focus == 'спина':
-            plan = {
-                'понедельник': {'name': 'Спина (база)', 'exercises': self.generate_workout('спина', 'hard')},
-                'вторник': {'name': 'Грудь + Плечи',
-                            'exercises': self.generate_workout('грудь', 'medium') + self.generate_workout('плечи',
-                                                                                                          'easy')},
-                'среда': {'name': 'Отдых', 'exercises': []},
-                'четверг': {'name': 'Спина (детали)', 'exercises': self.generate_workout('спина', 'medium')},
-                'пятница': {'name': 'Ноги', 'exercises': self.generate_workout('ноги', 'medium')},
-                'суббота': {'name': 'Руки',
-                            'exercises': self.generate_workout('бицепс', 'easy') + self.generate_workout('трицепс',
-                                                                                                         'easy')},
-                'воскресенье': {'name': 'Отдых', 'exercises': []}
-            }
+            plan['понедельник']['exercises'] = self.generate_workout('спина', 'hard')
+            plan['вторник']['exercises'] = self.generate_workout('грудь', 'medium') + self.generate_workout('плечи',
+                                                                                                            'easy')
+            plan['четверг']['exercises'] = self.generate_workout('спина', 'medium')
+            plan['пятница']['exercises'] = self.generate_workout('ноги', 'medium')
+            plan['суббота']['exercises'] = self.generate_workout('бицепс', 'easy') + self.generate_workout('трицепс',
+                                                                                                           'easy')
+
         elif focus == 'ноги':
-            plan = {
-                'понедельник': {'name': 'Ноги (сила)', 'exercises': self.generate_workout('ноги', 'hard')},
-                'вторник': {'name': 'Грудь + Трицепс',
-                            'exercises': self.generate_workout('грудь', 'medium') + self.generate_workout('трицепс',
-                                                                                                          'easy')},
-                'среда': {'name': 'Отдых', 'exercises': []},
-                'четверг': {'name': 'Ноги (объём)', 'exercises': self.generate_workout('ноги', 'medium')},
-                'пятница': {'name': 'Спина + Бицепс',
-                            'exercises': self.generate_workout('спина', 'medium') + self.generate_workout('бицепс',
-                                                                                                          'easy')},
-                'суббота': {'name': 'Плечи + Пресс',
-                            'exercises': self.generate_workout('плечи', 'easy') + self.generate_workout('пресс',
-                                                                                                        'medium')},
-                'воскресенье': {'name': 'Отдых', 'exercises': []}
-            }
+            plan['понедельник']['exercises'] = self.generate_workout('ноги', 'hard')
+            plan['вторник']['exercises'] = self.generate_workout('грудь', 'medium') + self.generate_workout('трицепс',
+                                                                                                            'easy')
+            plan['четверг']['exercises'] = self.generate_workout('ноги', 'medium')
+            plan['пятница']['exercises'] = self.generate_workout('спина', 'medium') + self.generate_workout('бицепс',
+                                                                                                            'easy')
+            plan['суббота']['exercises'] = self.generate_workout('плечи', 'easy') + self.generate_workout('пресс',
+                                                                                                          'medium')
+
+        elif focus == 'руки':
+            plan['понедельник']['exercises'] = self.generate_workout('бицепс', 'hard') + self.generate_workout(
+                'трицепс', 'hard')
+            plan['вторник']['exercises'] = self.generate_workout('грудь', 'medium')
+            plan['среда']['exercises'] = self.generate_workout('спина', 'medium')
+            plan['четверг']['exercises'] = self.generate_workout('плечи', 'medium')
+            plan['пятница']['exercises'] = self.generate_workout('бицепс', 'medium') + self.generate_workout('трицепс',
+                                                                                                             'medium')
+            plan['суббота']['exercises'] = self.generate_workout('ноги', 'medium')
+
         else:  # баланс
-            plan = {
-                'понедельник': {
-                    'name': 'Грудь + Трицепс',
-                    'exercises': self.generate_workout('грудь', 'medium') + self.generate_workout('трицепс', 'easy')
-                },
-                'вторник': {
-                    'name': 'Спина + Бицепс',
-                    'exercises': self.generate_workout('спина', 'medium') + self.generate_workout('бицепс', 'easy')
-                },
-                'среда': {
-                    'name': 'Ноги',
-                    'exercises': self.generate_workout('ноги', 'medium')
-                },
-                'четверг': {
-                    'name': 'Плечи + Пресс',
-                    'exercises': self.generate_workout('плечи', 'medium') + self.generate_workout('пресс', 'easy')
-                },
-                'пятница': {
-                    'name': 'Руки',
-                    'exercises': self.generate_workout('бицепс', 'medium') + self.generate_workout('трицепс', 'medium')
-                },
-                'суббота': {
-                    'name': 'Общая тренировка',
-                    'exercises': (
-                            self.generate_workout('грудь', 'easy') +
-                            self.generate_workout('спина', 'easy') +
-                            self.generate_workout('ноги', 'easy')
-                    )
-                },
-                'воскресенье': {'name': 'Отдых', 'exercises': []}
-            }
+            plan['понедельник']['exercises'] = self.generate_workout('грудь', 'medium') + self.generate_workout(
+                'трицепс', 'easy')
+            plan['вторник']['exercises'] = self.generate_workout('спина', 'medium') + self.generate_workout('бицепс',
+                                                                                                            'easy')
+            plan['среда']['exercises'] = self.generate_workout('ноги', 'medium')
+            plan['четверг']['exercises'] = self.generate_workout('плечи', 'medium') + self.generate_workout('пресс',
+                                                                                                            'easy')
+            plan['пятница']['exercises'] = self.generate_workout('бицепс', 'medium') + self.generate_workout('трицепс',
+                                                                                                             'medium')
+            plan['суббота']['exercises'] = (
+                    self.generate_workout('грудь', 'easy') +
+                    self.generate_workout('спина', 'easy') +
+                    self.generate_workout('ноги', 'easy')
+            )
+
+        # Логируем результат для отладки
+        days_with_exercises = [day for day in plan if plan[day]['exercises']]
+        logger.info(f"✅ План сгенерирован. Дни с упражнениями: {days_with_exercises}")
 
         return plan
 
