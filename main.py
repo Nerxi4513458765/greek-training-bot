@@ -17,7 +17,7 @@ from flask import Flask, request, jsonify
 
 from database import Database
 from config import BOT_TOKEN, WEB_APP_URL
-from handlers import start, oracle, chronicles, trials, info
+from handlers import start, chronicles, trials, info, trainer
 
 # Настройка логирования
 logging.basicConfig(
@@ -55,7 +55,7 @@ app = Flask(__name__)
 # ============================================
 
 dp.include_router(start.router)
-dp.include_router(oracle.router)
+dp.include_router(trainer.router)
 dp.include_router(chronicles.router)
 dp.include_router(trials.router)
 dp.include_router(info.router)
