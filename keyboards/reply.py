@@ -15,7 +15,6 @@ def get_main_keyboard(web_app_url: str) -> ReplyKeyboardMarkup:
     ))
 
     # Кнопки для навигации
-    builder.add(KeyboardButton(text="🏺 ОРАКУЛ"))
     builder.add(KeyboardButton(text="📜 ХРОНИКИ"))
     builder.add(KeyboardButton(text="🔥 ИСПЫТАНИЯ"))
     builder.add(KeyboardButton(text="🏛 О ЧЕРТОГЕ"))
