@@ -1,5 +1,5 @@
 """
-database.py - База данных с поддержкой удаления
+database.py - База данных с библиотекой упражнений и генератором планов
 """
 
 import sqlite3
@@ -14,11 +14,13 @@ class Database:
     def __init__(self, db_name="training.db"):
         self.db_name = db_name
         self.init_db()
+        self.init_exercises_library()
 
     def get_connection(self):
         return sqlite3.connect(self.db_name)
 
     def init_db(self):
+        """Создание всех таблиц"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
@@ -46,17 +48,225 @@ class Database:
                 )
             ''')
 
-            conn.commit()
-            logger.info("✅ База данных готова")
+            # Библиотека упражнений
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS exercises_library (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    muscle_group TEXT NOT NULL,
+                    exercise_name TEXT NOT NULL,
+                    description TEXT,
+                    default_sets INTEGER DEFAULT 3,
+                    default_reps INTEGER DEFAULT 10,
+                    difficulty TEXT DEFAULT 'medium',
+                    equipment TEXT,
+                    UNIQUE(muscle_group, exercise_name)
+                )
+            ''')
 
-    def add_user(self, user_id, username=None, first_name=None, last_name=None):
+            # Сохранённые планы пользователей
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_plans (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    plan_name TEXT NOT NULL,
+                    focus_muscle TEXT,
+                    week_plan TEXT NOT NULL,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (user_id)
+                )
+            ''')
+
+            conn.commit()
+            logger.info("✅ Все таблицы созданы")
+
+    def init_exercises_library(self):
+        """Заполняем библиотеку упражнений"""
+        exercises = [
+            # ГРУДЬ
+            ('грудь', 'Жим штанги лёжа', 'Базовое упражнение для всей груди', 4, 10, 'medium', 'штанга'),
+            ('грудь', 'Жим гантелей на наклонной', 'Акцент на верх груди', 3, 12, 'medium', 'гантели'),
+            ('грудь', 'Сведение рук в кроссовере', 'Изолированная работа', 3, 15, 'easy', 'тренажёр'),
+            ('грудь', 'Отжимания на брусьях', 'Низ груди и трицепс', 3, 10, 'hard', 'брусья'),
+            ('грудь', 'Жим в хаммере', 'Машина для грудных', 3, 12, 'easy', 'тренажёр'),
+            ('грудь', 'Пуловер с гантелью', 'Растяжка грудных', 3, 15, 'easy', 'гантели'),
+
+            # СПИНА
+            ('спина', 'Подтягивания широким хватом', 'Ширина спины', 4, 8, 'hard', 'турник'),
+            ('спина', 'Тяга штанги в наклоне', 'Толщина спины', 4, 10, 'medium', 'штанга'),
+            ('спина', 'Тяга верхнего блока', 'Широчайшие мышцы', 3, 12, 'easy', 'тренажёр'),
+            ('спина', 'Тяга гантели к поясу', 'Детализация', 3, 12, 'medium', 'гантели'),
+            ('спина', 'Мёртвая тяга', 'Вся спина и ноги', 5, 5, 'hard', 'штанга'),
+            ('спина', 'Шраги с гантелями', 'Трапеции', 3, 15, 'easy', 'гантели'),
+
+            # НОГИ
+            ('ноги', 'Приседания со штангой', 'Квадрицепс, ягодицы', 5, 8, 'hard', 'штанга'),
+            ('ноги', 'Румынская тяга', 'Бицепс бедра', 4, 10, 'medium', 'штанга'),
+            ('ноги', 'Жим ногами', 'Масса ног', 3, 15, 'easy', 'тренажёр'),
+            ('ноги', 'Выпады с гантелями', 'Ягодицы', 3, 12, 'medium', 'гантели'),
+            ('ноги', 'Сгибания ног лёжа', 'Бицепс бедра', 3, 15, 'easy', 'тренажёр'),
+            ('ноги', 'Разгибания ног сидя', 'Квадрицепс', 3, 15, 'easy', 'тренажёр'),
+
+            # ПЛЕЧИ
+            ('плечи', 'Армейский жим стоя', 'Передняя и средняя дельта', 4, 8, 'hard', 'штанга'),
+            ('плечи', 'Махи гантелями в стороны', 'Средняя дельта', 3, 15, 'easy', 'гантели'),
+            ('плечи', 'Тяга штанги к подбородку', 'Средняя и задняя дельта', 3, 12, 'medium', 'штанга'),
+            ('плечи', 'Разведение рук в наклоне', 'Задняя дельта', 3, 15, 'medium', 'гантели'),
+
+            # БИЦЕПС
+            ('бицепс', 'Подъём штанги на бицепс', 'Масса бицепса', 3, 10, 'medium', 'штанга'),
+            ('бицепс', 'Молотки с гантелями', 'Брахиалис', 3, 12, 'easy', 'гантели'),
+            ('бицепс', 'Подъём гантелей на бицепс сидя', 'Пик бицепса', 3, 10, 'medium', 'гантели'),
+
+            # ТРИЦЕПС
+            ('трицепс', 'Французский жим лёжа', 'Длинная головка', 3, 10, 'medium', 'штанга'),
+            ('трицепс', 'Отжимания на трицепс', 'Все головки', 3, 12, 'hard', 'брусья'),
+            ('трицепс', 'Разгибание рук на блоке', 'Латеральная головка', 3, 15, 'easy', 'тренажёр'),
+
+            # ПРЕСС
+            ('пресс', 'Скручивания на римском стуле', 'Верх пресса', 3, 20, 'medium', 'тренажёр'),
+            ('пресс', 'Подъём ног в висе', 'Низ пресса', 3, 15, 'hard', 'турник'),
+            ('пресс', 'Планка', 'Кор', 3, 60, 'medium', 'коврик')
+        ]
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany('''
+                INSERT OR IGNORE INTO exercises_library 
+                (muscle_group, exercise_name, description, default_sets, default_reps, difficulty, equipment)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', exercises)
+            conn.commit()
+            logger.info(f"✅ Библиотека упражнений заполнена ({len(exercises)} упражнений)")
+
+    def get_exercises_by_muscle(self, muscle_group, limit=4):
+        """Получить упражнения для группы мышц"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR REPLACE INTO users (user_id, username, first_name, last_name)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, username, first_name, last_name))
-            conn.commit()
+                SELECT exercise_name, default_sets, default_reps, description, equipment
+                FROM exercises_library
+                WHERE muscle_group = ?
+                ORDER BY RANDOM()
+                LIMIT ?
+            ''', (muscle_group, limit))
+
+            return cursor.fetchall()
+
+    def generate_workout(self, muscle_group, intensity='medium'):
+        """Сгенерировать тренировку для группы мышц"""
+        counts = {'easy': 3, 'medium': 4, 'hard': 5}
+        count = counts.get(intensity, 4)
+
+        exercises = self.get_exercises_by_muscle(muscle_group, count)
+
+        return [{
+            'name': ex[0],
+            'sets': ex[1],
+            'reps': ex[2],
+            'weight': 0,
+            'equipment': ex[4]
+        } for ex in exercises]
+
+    def generate_weekly_plan(self, user_id, focus='все'):
+        """Сгенерировать план на неделю"""
+
+        # Базовая структура сплита
+        if focus == 'грудь':
+            plan = {
+                'понедельник': {
+                    'name': 'Грудь + Трицепс',
+                    'exercises': (
+                            self.generate_workout('грудь', 'hard') +
+                            self.generate_workout('трицепс', 'medium')
+                    )
+                },
+                'вторник': {'name': 'Отдых', 'exercises': []},
+                'среда': {
+                    'name': 'Спина + Бицепс',
+                    'exercises': (
+                            self.generate_workout('спина', 'medium') +
+                            self.generate_workout('бицепс', 'medium')
+                    )
+                },
+                'четверг': {'name': 'Отдых', 'exercises': []},
+                'пятница': {
+                    'name': 'Ноги + Плечи',
+                    'exercises': (
+                            self.generate_workout('ноги', 'hard') +
+                            self.generate_workout('плечи', 'medium')
+                    )
+                },
+                'суббота': {
+                    'name': 'Акцент на грудь',
+                    'exercises': self.generate_workout('грудь', 'medium')
+                },
+                'воскресенье': {'name': 'Отдых', 'exercises': []}
+            }
+        elif focus == 'спина':
+            plan = {
+                'понедельник': {'name': 'Спина (база)', 'exercises': self.generate_workout('спина', 'hard')},
+                'вторник': {'name': 'Грудь + Плечи',
+                            'exercises': self.generate_workout('грудь', 'medium') + self.generate_workout('плечи',
+                                                                                                          'easy')},
+                'среда': {'name': 'Отдых', 'exercises': []},
+                'четверг': {'name': 'Спина (детали)', 'exercises': self.generate_workout('спина', 'medium')},
+                'пятница': {'name': 'Ноги', 'exercises': self.generate_workout('ноги', 'medium')},
+                'суббота': {'name': 'Руки',
+                            'exercises': self.generate_workout('бицепс', 'easy') + self.generate_workout('трицепс',
+                                                                                                         'easy')},
+                'воскресенье': {'name': 'Отдых', 'exercises': []}
+            }
+        elif focus == 'ноги':
+            plan = {
+                'понедельник': {'name': 'Ноги (сила)', 'exercises': self.generate_workout('ноги', 'hard')},
+                'вторник': {'name': 'Грудь + Трицепс',
+                            'exercises': self.generate_workout('грудь', 'medium') + self.generate_workout('трицепс',
+                                                                                                          'easy')},
+                'среда': {'name': 'Отдых', 'exercises': []},
+                'четверг': {'name': 'Ноги (объём)', 'exercises': self.generate_workout('ноги', 'medium')},
+                'пятница': {'name': 'Спина + Бицепс',
+                            'exercises': self.generate_workout('спина', 'medium') + self.generate_workout('бицепс',
+                                                                                                          'easy')},
+                'суббота': {'name': 'Плечи + Пресс',
+                            'exercises': self.generate_workout('плечи', 'easy') + self.generate_workout('пресс',
+                                                                                                        'medium')},
+                'воскресенье': {'name': 'Отдых', 'exercises': []}
+            }
+        else:  # баланс
+            plan = {
+                'понедельник': {
+                    'name': 'Грудь + Трицепс',
+                    'exercises': self.generate_workout('грудь', 'medium') + self.generate_workout('трицепс', 'easy')
+                },
+                'вторник': {
+                    'name': 'Спина + Бицепс',
+                    'exercises': self.generate_workout('спина', 'medium') + self.generate_workout('бицепс', 'easy')
+                },
+                'среда': {
+                    'name': 'Ноги',
+                    'exercises': self.generate_workout('ноги', 'medium')
+                },
+                'четверг': {
+                    'name': 'Плечи + Пресс',
+                    'exercises': self.generate_workout('плечи', 'medium') + self.generate_workout('пресс', 'easy')
+                },
+                'пятница': {
+                    'name': 'Руки',
+                    'exercises': self.generate_workout('бицепс', 'medium') + self.generate_workout('трицепс', 'medium')
+                },
+                'суббота': {
+                    'name': 'Общая тренировка',
+                    'exercises': (
+                            self.generate_workout('грудь', 'easy') +
+                            self.generate_workout('спина', 'easy') +
+                            self.generate_workout('ноги', 'easy')
+                    )
+                },
+                'воскресенье': {'name': 'Отдых', 'exercises': []}
+            }
+
+        return plan
 
     def save_workout(self, user_id, workout_name, exercises):
         """Сохранить тренировку"""
@@ -65,23 +275,12 @@ class Database:
 
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-
-                # Проверяем пользователя
-                cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
-                if not cursor.fetchone():
-                    cursor.execute('INSERT INTO users (user_id) VALUES (?)', (user_id,))
-
-                # Сохраняем тренировку
                 cursor.execute('''
                     INSERT INTO workouts (user_id, workout_name, exercises)
                     VALUES (?, ?, ?)
                 ''', (user_id, workout_name, exercises_json))
-
                 conn.commit()
-                workout_id = cursor.lastrowid
-                logger.info(f"✅ Тренировка {workout_id} сохранена")
-                return workout_id
-
+                return cursor.lastrowid
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения: {e}")
             return None
@@ -106,50 +305,4 @@ class Database:
                     'date': row[2],
                     'exercises': json.loads(row[3])
                 })
-
             return workouts
-
-    def delete_workout(self, workout_id, user_id=None):
-        """Удалить тренировку по ID"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-
-                if user_id:
-                    cursor.execute('DELETE FROM workouts WHERE id = ? AND user_id = ?',
-                                   (workout_id, user_id))
-                else:
-                    cursor.execute('DELETE FROM workouts WHERE id = ?', (workout_id,))
-
-                conn.commit()
-                deleted = cursor.rowcount
-
-                if deleted > 0:
-                    logger.info(f"✅ Тренировка {workout_id} удалена")
-                    return True
-                return False
-
-        except Exception as e:
-            logger.error(f"❌ Ошибка удаления: {e}")
-            return False
-
-    def get_workout_stats(self, user_id):
-        """Получить статистику"""
-        workouts = self.get_user_workouts(user_id, limit=1000)
-
-        total_workouts = len(workouts)
-        total_exercises = sum(len(w['exercises']) for w in workouts)
-        total_weight = sum(
-            ex.get('weight', 0) * ex.get('sets', 0) * ex.get('reps', 0)
-            for w in workouts for ex in w['exercises']
-        )
-
-        return {
-            'total_workouts': total_workouts,
-            'total_exercises': total_exercises,
-            'total_weight': round(total_weight, 1),
-            'unique_exercises': len(set(
-                ex.get('name', '').lower()
-                for w in workouts for ex in w['exercises']
-            ))
-        }

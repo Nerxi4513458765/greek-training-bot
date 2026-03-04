@@ -1,5 +1,5 @@
 """
-main.py - Полный код бота с удалением тренировок по дате
+main.py - Полный код бота с разделом Тренер
 """
 
 import asyncio
@@ -145,7 +145,7 @@ def webhook():
                 data = json.loads(web_app_data['data'])
                 logger.info(f"📦 Тип: {data.get('type')} от {user_name}")
 
-                # ===== СОХРАНЕНИЕ =====
+                # ===== СОХРАНЕНИЕ ТРЕНИРОВКИ =====
                 if data.get('type') == 'new_workout':
                     workout = data.get('workout', {})
                     logger.info(f"💾 Сохранение: {workout.get('name')}")
@@ -167,24 +167,19 @@ def webhook():
                             loop
                         )
 
-                # ===== УДАЛЕНИЕ ПО ДАТЕ (РАБОЧИЙ ВАРИАНТ) =====
+                # ===== УДАЛЕНИЕ ПО ДАТЕ =====
                 elif data.get('type') == 'delete_workout_by_date':
                     iso_date = data.get('date')
                     logger.info(f"🗑️ Удаление тренировки от {iso_date}")
 
-                    # Берем только дату без времени
                     date_part = iso_date.split('T')[0]
-                    logger.info(f"📅 Удаляем тренировки за {date_part}")
 
                     with db.get_connection() as conn:
                         cursor = conn.cursor()
-
-                        # Удаляем все тренировки за эту дату
                         cursor.execute('''
                             DELETE FROM workouts 
                             WHERE user_id = ? AND DATE(workout_date) = ?
                         ''', (user_id, date_part))
-
                         conn.commit()
                         deleted = cursor.rowcount
 
@@ -199,15 +194,36 @@ def webhook():
                                 loop
                             )
                         else:
-                            logger.warning(f"⚠️ Тренировки за {date_part} не найдены")
-                            asyncio.run_coroutine_threadsafe(
-                                bot.send_message(
-                                    chat_id=user_id,
-                                    text=f"❌ <b>Ошибка удаления</b>\n\nТренировка не найдена",
-                                    parse_mode="HTML"
-                                ),
-                                loop
-                            )
+                            logger.warning(f"⚠️ Тренировки не найдены")
+
+                # ===== ГЕНЕРАЦИЯ ПЛАНА =====
+                elif data.get('type') == 'get_plan':
+                    focus = data.get('focus', 'все')
+                    logger.info(f"📋 Генерация плана для {user_name} с фокусом: {focus}")
+
+                    plan = db.generate_weekly_plan(user_id, focus)
+
+                    # Отправляем план в личку (временное решение)
+                    plan_summary = f"📋 Твой план на неделю (фокус: {focus}):\n\n"
+                    days = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье']
+
+                    for day in days:
+                        if day in plan and plan[day]['exercises']:
+                            plan_summary += f"📅 {plan[day]['name']}:\n"
+                            for ex in plan[day]['exercises'][:3]:
+                                plan_summary += f"  • {ex['name']} - {ex['sets']}x{ex['reps']}\n"
+                            if len(plan[day]['exercises']) > 3:
+                                plan_summary += f"  ... и ещё {len(plan[day]['exercises']) - 3}\n"
+                            plan_summary += "\n"
+
+                    asyncio.run_coroutine_threadsafe(
+                        bot.send_message(
+                            chat_id=user_id,
+                            text=plan_summary,
+                            parse_mode="HTML"
+                        ),
+                        loop
+                    )
 
             except Exception as e:
                 logger.error(f"❌ Ошибка обработки данных: {e}")
