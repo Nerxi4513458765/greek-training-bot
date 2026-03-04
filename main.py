@@ -53,7 +53,6 @@ app = Flask(__name__)
 # ============================================
 # ПОДКЛЮЧАЕМ ВСЕ ОБРАБОТЧИКИ
 # ============================================
-
 dp.include_router(start.router)
 dp.include_router(trainer.router)
 dp.include_router(chronicles.router)
