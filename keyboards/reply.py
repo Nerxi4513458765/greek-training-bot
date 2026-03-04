@@ -4,7 +4,7 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 def get_main_keyboard(web_app_url: str) -> ReplyKeyboardMarkup:
     """
-    Главная клавиатура с античным стилем
+    Главная клавиатура (Оракул удалён)
     """
     builder = ReplyKeyboardBuilder()
 
@@ -14,14 +14,14 @@ def get_main_keyboard(web_app_url: str) -> ReplyKeyboardMarkup:
         web_app=WebAppInfo(url=web_app_url)
     ))
 
-    # Кнопки для навигации
+    # Кнопки для навигации (Оракула больше нет!)
     builder.add(KeyboardButton(text="📜 ХРОНИКИ"))
     builder.add(KeyboardButton(text="🔥 ИСПЫТАНИЯ"))
     builder.add(KeyboardButton(text="🏛 О ЧЕРТОГЕ"))
-    builder.add(KeyboardButton(text="⚡ ПОДВИГ ДНЯ"))
+    # builder.add(KeyboardButton(text="🏺 ОРАКУЛ"))  ← УДАЛЕНО!
 
     # Располагаем: первая кнопка во всю ширину, остальные по 2 в ряд
-    builder.adjust(1, 2, 2, 1)
+    builder.adjust(1, 2, 1)
 
     return builder.as_markup(resize_keyboard=True)
 
