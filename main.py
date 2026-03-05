@@ -134,6 +134,8 @@ def health():
 def get_plan():
     print("\n" + "=" * 60)
     print("🔥🔥🔥 ЗАПРОС НА /get_plan ПОЛУЧЕН 🔥🔥🔥")
+    print(f"Метод: {request.method}")
+    print(f"Headers: {dict(request.headers)}")
 
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'preflight ok'})
@@ -143,18 +145,26 @@ def get_plan():
         return response, 200
 
     try:
+        # Логируем сырые данные
+        raw_data = request.get_data(as_text=True)
+        print(f"📦 Сырые данные: {raw_data}")
+
         data = request.get_json()
+        print(f"📋 Распарсенные данные: {data}")
+
         user_id = data.get('user_id')
         focus = data.get('focus', 'все')
 
-        print(f"📋 Параметры: user_id={user_id}, focus={focus}")
+        print(f"👤 user_id: {user_id}, focus: {focus}")
 
         if user_id == 0:
             user_id = 12345
-            print("⚠️ Тестовый режим")
+            print("⚠️ Тестовый режим: используем user_id=12345")
 
         # Генерируем план
+        print("⚙️ Генерируем план...")
         plan = db.generate_weekly_plan(user_id, focus)
+        print(f"✅ План сгенерирован. Дни: {list(plan.keys())}")
 
         # Сохраняем план в БД
         plan_json = json.dumps(plan, ensure_ascii=False)
@@ -165,8 +175,9 @@ def get_plan():
                 VALUES (?, ?, ?, ?)
             ''', (user_id, f'План на неделю ({focus})', focus, plan_json))
             conn.commit()
+        print("💾 План сохранён в БД")
 
-        # Формируем красивое сообщение
+        # Формируем сообщение для Telegram
         plan_message = f"🏋️ <b>Твой план на неделю (фокус: {focus})</b>\n\n"
 
         days = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье']
@@ -194,14 +205,27 @@ def get_plan():
         plan_message += "✏️ <i>Открой Mini App, чтобы отредактировать план</i>"
 
         # Отправляем в Telegram
-        asyncio.run_coroutine_threadsafe(
-            bot.send_message(
-                chat_id=user_id,
-                text=plan_message,
-                parse_mode="HTML"
-            ),
-            loop
-        )
+        print(f"📤 Отправляем сообщение пользователю {user_id}")
+        print(f"📝 Длина сообщения: {len(plan_message)} символов")
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                bot.send_message(
+                    chat_id=user_id,
+                    text=plan_message,
+                    parse_mode="HTML"
+                ),
+                loop
+            )
+
+            # Ждём результат отправки
+            result = future.result(timeout=10)
+            print(f"✅ Сообщение отправлено, message_id: {result.message_id}")
+
+        except Exception as e:
+            print(f"❌ Ошибка отправки: {e}")
+            import traceback
+            traceback.print_exc()
 
         # Отправляем подтверждение в Mini App
         response_data = {'success': True, 'message': 'План отправлен в Telegram'}
@@ -210,7 +234,7 @@ def get_plan():
         return response, 200
 
     except Exception as e:
-        print(f"❌ ОШИБКА: {e}")
+        print(f"❌❌❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
         import traceback
         traceback.print_exc()
         response = jsonify({'success': False, 'error': str(e)})
