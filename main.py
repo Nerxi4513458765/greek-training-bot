@@ -1,5 +1,5 @@
 """
-main.py - Полный код бота с исправлением user_id
+main.py - Полный код с отправкой плана в Telegram
 """
 
 import asyncio
@@ -129,16 +129,13 @@ def health():
     })
 
 
-# ===== ЭНДПОИНТ ДЛЯ ГЕНЕРАЦИИ ПЛАНА =====
+# ===== ГЕНЕРАЦИЯ ПЛАНА =====
 @app.route('/get_plan', methods=['POST', 'OPTIONS'])
 def get_plan():
     print("\n" + "=" * 60)
     print("🔥🔥🔥 ЗАПРОС НА /get_plan ПОЛУЧЕН 🔥🔥🔥")
-    print(f"Метод запроса: {request.method}")
-    print(f"Заголовки запроса: {dict(request.headers)}")
 
     if request.method == 'OPTIONS':
-        print("⚙️ Preflight запрос")
         response = jsonify({'status': 'preflight ok'})
         response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
@@ -146,63 +143,127 @@ def get_plan():
         return response, 200
 
     try:
-        print("📦 Получен POST-запрос")
-
-        raw_data = request.get_data(as_text=True)
-        print(f"Сырые данные: {raw_data}")
-
-        if not raw_data:
-            print("❌ Пустые данные!")
-            response = jsonify({'success': False, 'error': 'Empty request'})
-            response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
-            return response, 400
-
         data = request.get_json()
-        print(f"Распарсенный JSON: {data}")
-
-        if not data:
-            print("❌ Не удалось распарсить JSON!")
-            response = jsonify({'success': False, 'error': 'Invalid JSON'})
-            response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
-            return response, 400
-
         user_id = data.get('user_id')
         focus = data.get('focus', 'все')
 
-        print(f"Параметры: user_id={user_id}, focus={focus}")
+        print(f"📋 Параметры: user_id={user_id}, focus={focus}")
 
-        if user_id is None:
-            print("❌ НЕТ USER_ID В ДАННЫХ!")
-            response = jsonify({'success': False, 'error': 'user_id is required'})
-            response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
-            return response, 400
-
-        # Разрешаем user_id = 0 для тестов в браузере
         if user_id == 0:
-            print("⚠️ Тестовый режим: user_id = 0, используем заглушку")
             user_id = 12345
+            print("⚠️ Тестовый режим")
 
         # Генерируем план
-        print("⚙️ Генерируем план...")
         plan = db.generate_weekly_plan(user_id, focus)
-        print(f"✅ План сгенерирован")
 
-        response_data = {'success': True, 'plan': plan}
-        print(f"📤 Отправляем ответ")
+        # Сохраняем план в БД
+        plan_json = json.dumps(plan, ensure_ascii=False)
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO user_plans (user_id, plan_name, focus_muscle, week_plan)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, f'План на неделю ({focus})', focus, plan_json))
+            conn.commit()
+
+        # Формируем красивое сообщение
+        plan_message = f"🏋️ <b>Твой план на неделю (фокус: {focus})</b>\n\n"
+
+        days = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье']
+        day_names = {
+            'понедельник': '🌙 ПОНЕДЕЛЬНИК', 'вторник': '🔥 ВТОРНИК', 'среда': '💧 СРЕДА',
+            'четверг': '🌪️ ЧЕТВЕРГ', 'пятница': '⚡ ПЯТНИЦА', 'суббота': '✨ СУББОТА', 'воскресенье': '☀️ ВОСКРЕСЕНЬЕ'
+        }
+
+        for day in days:
+            if day in plan:
+                day_plan = plan[day]
+                if day_plan['exercises']:
+                    plan_message += f"<b>{day_names.get(day, day)}</b>\n"
+                    plan_message += f"<code>{'=' * 30}</code>\n"
+
+                    for i, ex in enumerate(day_plan['exercises'], 1):
+                        intensity = '🔴 Тяжёлая' if ex['sets'] >= 5 else ('🟢 Лёгкая' if ex['sets'] <= 3 else '🟡 Средняя')
+                        plan_message += f"{i}. {ex['name']}\n"
+                        plan_message += f"   {intensity} | {ex['sets']}×{ex['reps']} | {ex['weight']} кг\n"
+
+                    plan_message += "\n"
+                else:
+                    plan_message += f"<b>{day_names.get(day, day)}</b> — 😴 Отдых\n\n"
+
+        plan_message += "✏️ <i>Открой Mini App, чтобы отредактировать план</i>"
+
+        # Отправляем в Telegram
+        asyncio.run_coroutine_threadsafe(
+            bot.send_message(
+                chat_id=user_id,
+                text=plan_message,
+                parse_mode="HTML"
+            ),
+            loop
+        )
+
+        # Отправляем подтверждение в Mini App
+        response_data = {'success': True, 'message': 'План отправлен в Telegram'}
+        response = jsonify(response_data)
+        response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
+        return response, 200
+
+    except Exception as e:
+        print(f"❌ ОШИБКА: {e}")
+        import traceback
+        traceback.print_exc()
+        response = jsonify({'success': False, 'error': str(e)})
+        response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
+        return response, 500
+
+
+# ===== ПОЛУЧЕНИЕ СОХРАНЁННОГО ПЛАНА =====
+@app.route('/get_user_plan', methods=['POST', 'OPTIONS'])
+def get_user_plan():
+    """Получить сохранённый план пользователя"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'preflight ok'})
+        response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'POST')
+        return response, 200
+
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+
+        if user_id == 0:
+            user_id = 12345
+
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT week_plan, focus_muscle FROM user_plans 
+                WHERE user_id = ? ORDER BY created_at DESC LIMIT 1
+            ''', (user_id,))
+
+            row = cursor.fetchone()
+
+            if row:
+                plan = json.loads(row[0])
+                response_data = {
+                    'success': True,
+                    'plan': plan,
+                    'focus': row[1]
+                }
+            else:
+                response_data = {'success': False, 'error': 'План не найден'}
 
         response = jsonify(response_data)
         response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
         return response, 200
 
     except Exception as e:
-        print(f"❌❌❌ ОШИБКА: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"❌ Ошибка: {e}")
         response = jsonify({'success': False, 'error': str(e)})
         response.headers.add('Access-Control-Allow-Origin', 'https://nerxi4513458765.github.io')
         return response, 500
-    finally:
-        print("=" * 60 + "\n")
 
 
 @app.route(WEBHOOK_PATH, methods=['POST'])
